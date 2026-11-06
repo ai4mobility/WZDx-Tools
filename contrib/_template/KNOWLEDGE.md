@@ -1,13 +1,8 @@
 # Knowledge card: work_zones_on_street
 
 *This card describes the template's example tool. In your copy, replace every section with your own tools,
-rules and tests. The checker reads the section titles, so keep them.*
-
-## Who it is for
-
-A traffic operations analyst at a city, or a dispatcher, who hears about a street ("is anything going on along
-Busch Blvd?") and needs to know, in one call, whether work is reported on it today, which directions and lanes, and
-until when. They ask this several times a day, by street name, never by FDOT record id.
+rules and tests. The checker reads the section titles, so keep them. Who the tools are for, and why they are
+designed the way they are, goes in DESIGN.md.*
 
 ## Rules
 
