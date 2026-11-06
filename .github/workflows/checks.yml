@@ -1,0 +1,45 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  toolkit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "mcp>=2"
+      - run: python test_wzdx.py mcp
+      - run: python contrib/_template/test_tools.py
+
+  contribution:
+    # a pull request adds one folder, contrib/<author>/, and it must pass contrib/check.py
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "mcp>=2"
+      - run: python contrib/check.py --changed ${{ github.event.pull_request.base.sha }} --author ${{ github.event.pull_request.user.login }}
+
+  all-contributions:
+    # run by hand (Actions > checks > Run workflow): every folder in contrib/
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "mcp>=2"
+      - run: python contrib/check.py --all

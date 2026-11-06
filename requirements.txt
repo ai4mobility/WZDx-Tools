@@ -1,0 +1,6 @@
+# the tools use only the Python standard library (3.10 or newer)
+# serve them over MCP
+mcp>=2
+# only for contrib/agent_loop.py, which runs a model on your computer
+torch
+transformers
