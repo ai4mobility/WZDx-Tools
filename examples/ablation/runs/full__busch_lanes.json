@@ -1,0 +1,44 @@
+{
+ "harness": "ablation.py",
+ "model": "Qwen/Qwen3-1.7B",
+ "thinking": false,
+ "seed": 1,
+ "server": "contrib/demo-student/server.py",
+ "date": "2026-11-06T15:33:40-05:00",
+ "data": "WZDx snapshot snapshots/2026-11-05",
+ "device": "cpu",
+ "descriptions_of_your_tools": {
+  "street_work_report": "Active work on one street near a place, counted as works rather than records. feed: 'FL', 'AZ' or a name from list_feeds. street: a street name as people say it ('Busch Blvd', 'N 30th St', 'Fowler Avenue'); suffixes and directions may be spelled out or abbreviated, and a name without N/S/E/W matches every direction prefix. near_lat, near_lon and radius_mi (default 5 mi) give the place, because street names repeat across a state (Florida's feed has a 109th Avenue in Tampa and another 200 mi away). One work (a permit or a project) is often reported as several records, one per segment and direction: the result lists each work with its records' directions, lane impact, closed lanes, end time in local time and reporting organization. 'Lane impact not reported' means the feed does not say; it does not mean the lanes are open. The result also says how many active records near the place have no street name, which a search by name cannot find. For route numbers (I-75, SR 580, US 41) use get_work_zones. Read-only.",
+  "street_work_count": "How many active works and records are reported on one street near a place, in one line, without the details. Uses the same street-name rules as street_work_report (suffixes, directions, several streets in one name, a city is not a street) and counts works, not records. Use it to compare or scan several streets quickly, then call street_work_report for a street that has work. Read-only."
+ },
+ "tools_served": [
+  "list_feeds",
+  "get_work_zones",
+  "check_location",
+  "get_detours",
+  "feed_quality",
+  "street_work_report",
+  "street_work_count"
+ ],
+ "instructions": "Work zones from public WZDx feeds (USDOT format): Florida (FL, FDOT via One.network), Arizona (AZ) and others from list_feeds. Times are local. Most work zones do not report lane impact and none has a verified position: say \"unknown\" and \"reported\", never \"open\" or \"confirmed\". No reported work zone does not mean none exists. For a street name (Busch Blvd, N 30th St), use street_work_report with a point near the place: it reads street names the way people write them and counts works rather than records; to compare streets, use street_work_count. For route numbers use get_work_zones. For how complete a feed is, call feed_quality and report its numbers; never estimate completeness yourself.",
+ "calls": [
+  {
+   "name": "street_work_report",
+   "arguments": {
+    "feed": "FL",
+    "street": "Busch Blvd",
+    "near_lat": 28.0587,
+    "near_lon": -82.4139
+   },
+   "check": "ok",
+   "result": "Busch Blvd within 5 mi of (28.0587, -82.4139), fldot feed updated Thu Nov 5 09:21 EST: 1 active work(s) on the street, from 2 record(s). Lane impact not reported for 1 of 2 records.\n- work 4577091647 · E Busch Blvd · 2.1 mi away · reported by City of Tampa, Florida · 2 record(s)\n    direction not reported: lane impact not reported · until Thu Nov 5 16:00 EST\n    eastbound: some lanes closed, right lane of 3 closed · until Thu Nov 5 16:00 EST\n    East Busch Boulevard, Tampa\nNot findable by name: 5 active record(s) within 5 mi have no street name. To see them, call get_work_zones with near_lat, near_lon and radius_mi."
+  }
+ ],
+ "answer": "Yes, there is a work reported on Busch Blvd near USF (28.0587, -82.4139) right now. The work is reported by the City of Tampa, Florida, and it is 2.1 miles away. The work involves some lanes closed on the eastbound direction. The work is reported until Thursday, November 5, 16:00 EST. The lane impact is not reported for one of the records, but it is reported for the eastbound direction. The work is reported as follows:\n\n- East Busch Boulevard, Tampa\n- Eastbound: some lanes closed, right lane of 3 closed\n\nThe work is reported as 1 active work on the street, from 2 record(s). The work is not findable by name, and there are 5 active record(s) within 5 mi that have no street name. To see them, call get_work_zones with near_lat, near_lon and radius_mi.",
+ "note": null,
+ "turns": 2,
+ "model_s": 86.9,
+ "setup": "full",
+ "question_id": "busch_lanes",
+ "question": "Is any work reported on Busch Blvd near USF (28.0587, -82.4139) right now, and which lanes are closed?"
+}

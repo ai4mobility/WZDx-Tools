@@ -17,7 +17,7 @@ street. On FDOT's feed of Nov 5 2026 (`snapshots/2026-11-05/`):
 |---|---|
 | 'Unknown' is not 'open' | 96% of the work zones say `vehicle_impact: unknown`; a model reads silence as open lanes |
 | WZDx counts lanes from the left and lists shoulders as lanes | The Busch Blvd record in FDOT's feed has lane 4 of 5 closed; it is the right travel lane of 3 |
-| People write street names many ways | A text search for 'Busch Blvd' finds nothing; the record says 'East Busch Boulevard' |
+| People write street names many ways | A text search for 'Busch Blvd' finds only the record whose name field says 'E Busch Blvd', with no lane data; it misses the record with the closed lane, which says 'East Busch Boulevard' |
 | One work is reported as several records | 30th St near USF has 4 records and 2 works |
 | A name is not a place | The feed has an East 109th Avenue in Tampa and a Southwest 109th Avenue 200 mi away |
 | A permit is not a crew on site | The dates are the window a permit allows, not the hours anyone works |
@@ -131,5 +131,23 @@ The transportation knowledge is the hard part of each of these. The Python is th
 - **Arizona versus Florida.** The same question on both feeds, with what each one fills in and leaves out.
 - **Detours.** Florida links detours to their work zones (`get_detours`): which work zones have one, and how much
   longer it is (the geometry is in the raw snapshot; the toolkit drops it to save memory).
+
+## 11. Measure what your work is worth: the ablation
+
+A tool is a claim that the agent does the task better with it. Writing your knowledge into the description and the
+result is a second claim: that the words the model reads matter, not only the code. `contrib/ablation.py` tests each
+claim with one comparison, on your own three questions:
+
+- **With and without your tools** (A vs. C): the toolkit alone, then your tools as written.
+- **With and without the knowledge in what the model reads** (B vs. C): your tools find the same data both times,
+  but in B the description is plain (`PLAIN_DESCRIPTIONS`), the result is raw (`RAW_RESULTS`), and your server
+  instructions are left out.
+
+In the worked example (`examples/ablation/`), the 1.7B model answered 1 of 3 questions right with the
+toolkit alone and 2 of 3 with the new tools (the third partly right). With the plain descriptions it got none right,
+because it never called the new tools: the words, not the code, decided whether the tool was used at all.
+
+Write the questions and their right answers before you look at any run, and check each right answer against the
+data. When a result goes against you, it is still a result: read the answers to find out why.
 
 Questions and ideas are welcome as issues on this repository.

@@ -1,0 +1,25 @@
+{
+ "about": "Your questions for the ablation (at least three), written before you run it. Each has an id, the question as the person in DESIGN.md section 1 would ask it, and the right answer: what a correct answer must say, and where you checked it in the data. 'env' is set for every run (paths from the repository root). 'max_steps' is the most model turns a run may take.",
+ "env": {
+  "WZDX_SNAPSHOT": "snapshots/2026-11-05",
+  "WZDX_NOW": "1793888460"
+ },
+ "max_steps": 8,
+ "questions": [
+  {
+   "id": "busch_lanes",
+   "question": "Is any work reported on Busch Blvd near USF (28.0587, -82.4139) right now, and which lanes are closed?",
+   "answer": "Yes: one work by the City of Tampa on East Busch Boulevard, about 2 mi from the point, reported as 2 records, until Thu Nov 5 at 4:00 pm. Eastbound, the right lane of 3 travel lanes is closed (the feed lists it as lane 4 of 5, because it counts the shoulders). The other record gives no direction and no lane impact. Checked in snapshots/2026-11-05/fldot.json, work 4577091647."
+  },
+  {
+   "id": "thirtieth_works",
+   "question": "How many separate works (permits or projects) are reported on 30th St near USF (28.0587, -82.4139) right now?",
+   "answer": "Two: a new sewer main (permit ROW-25-0001919, reported as 3 records, until Dec 15) and a wastewater repair (CWS-27-0000027, 1 record, until Nov 6 at 5:00 pm). The feed has 4 records, not 4 works. Checked in snapshots/2026-11-05/fldot.json, works 4233451340 and 4519480375."
+  },
+  {
+   "id": "thirtieth_lanes",
+   "question": "Does the sewer work on 30th St near USF (28.0587, -82.4139) close any lanes?",
+   "answer": "The feed does not say: every record of the 30th St works reports its lane impact as unknown. That is not the same as no lanes closed. Checked in snapshots/2026-11-05/fldot.json: vehicle_impact is 'unknown' on all 4 records."
+  }
+ ]
+}

@@ -77,8 +77,9 @@ reduced speed for 332, no detours.
 
 ## Design decisions (and the test that holds each)
 
-- Roads: 'I 75' = 'I-75' but not I-275; 'FL 434' = 'SR 434'. Street names match as plain text ('Busch Boulevard'),
-  so 'Busch Blvd' does not find 'East Busch Boulevard': the template contribution shows how to do better.
+- Roads: 'I 75' = 'I-75' but not I-275; 'FL 434' = 'SR 434'. Street names match as plain text, so 'Busch Blvd'
+  finds only a record whose name field happens to say 'E Busch Blvd', and misses the one that says 'East Busch
+  Boulevard' (the record with the lane closure): the template contribution shows how to do better.
 - Lanes: WZDx numbers lanes from the left (order 1 = left-most) and lists shoulders as lanes, so the Busch Boulevard
   record's 'lane 4 of 5 closed' is written 'right lane of 3 closed'.
 - Speed: WZDx stores km/h; the tools give mph (72.42 km/h -> 45 mph).

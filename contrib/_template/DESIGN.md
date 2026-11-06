@@ -31,8 +31,9 @@ what did you leave out? -->
 One tool, `work_zones_on_street`, answers "what work is on this street near this place?" It returns each active
 work on the street, with its records' directions, lane impact, closed lanes, end time and reporter.
 
-The toolkit already has `get_work_zones(road=...)`, but it matches names as plain text. FDOT's feed writes "East
-Busch Boulevard", so a search for "Busch Blvd" finds nothing, and the only lane closure near campus is missed. The
+The toolkit already has `get_work_zones(road=...)`, but it matches names as plain text. For "Busch Blvd" it finds
+only the record whose name field happens to say "E Busch Blvd". It misses the record that says "East Busch
+Boulevard", which is the one with the only lane closure near campus. The
 new tool carries what a person who works with addresses and permits knows. Street names come in several spellings
 (rule 1). One field can hold two streets and a city (rule 2). The same name exists in other cities (rule 3). One
 permit appears as several records, one per segment and direction (rule 4). "Unknown" is not "open" (rule 5). And

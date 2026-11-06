@@ -7,12 +7,16 @@ tools (at least two). Keep the shape:
   * a *_plain function is the baseline: the same question answered without your knowledge. It is not in TOOLS, so
     the model never sees it; test_plain_vs_... uses it to show what your knowledge changes
   * the toolkit (wzdx_tools.py, imported as T) does the plumbing: loading feeds, local time, distances, lanes
+  * PLAIN_DESCRIPTIONS and RAW_RESULTS (at the end) are for the ablation: the same tools, with the transportation
+    knowledge taken out of what the model reads
 
 The example: "What work is on this street?" The toolkit's get_work_zones(road=...) matches street names as plain
-text, so 'Busch Blvd' misses FDOT's 'East Busch Boulevard'. work_zones_on_street adds what an engineer knows about
-street names and about how a work is reported. KNOWLEDGE.md lists each rule with its source and its test.
+text. For 'Busch Blvd' it finds only the record whose name field happens to say 'E Busch Blvd', and misses the
+record that says 'East Busch Boulevard': the one with the lane closure. work_zones_on_street adds what an engineer
+knows about street names and about how a work is reported. KNOWLEDGE.md lists each rule with its source and its
+test.
 """
-import os, sys, re
+import os, sys, re, json
 from typing import Optional
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import wzdx_tools as T
@@ -67,6 +71,27 @@ def _pretty(d, c, s):
     return ' '.join(x for x in (d, ' '.join(map(word, c.split())), s.capitalize()) if x)
 
 
+def _find(feed, street, near_lat, near_lon, radius_mi):
+    """The search, shared by the tool and its raw version: active records on the street within the radius, grouped
+    by work, and the count of active records nearby that have no street name."""
+    F = T._load(feed); now = T._now()
+    works, unnamed = {}, 0
+    for f in F['wz']:
+        p = f['properties']; cd = p.get('core_details', {})
+        if T._status(p, now) != 'active':
+            continue
+        d = T._dist(f, near_lat, near_lon)
+        if d is None or d > radius_mi:
+            continue
+        names = cd.get('road_names') or []
+        if not names:
+            unnamed += 1
+            continue
+        if any(_matches(street, n) for n in names):
+            works.setdefault(_work_id(f), []).append((d, f))
+    return F, works, unnamed
+
+
 @T._errors_as_text
 def work_zones_on_street(feed: str, street: str, near_lat: float, near_lon: float, radius_mi: float = 5.0) -> str:
     """Active work on one street near a place, counted as works rather than records. feed: 'FL', 'AZ' or a name
@@ -84,21 +109,8 @@ def work_zones_on_street(feed: str, street: str, near_lat: float, near_lon: floa
                 f"same point and radius.")
     if not _street_parts(street):
         return f"Error: '{street}' is not a street name. Give one such as 'Busch Blvd' or 'N 30th St'."
-    F = T._load(feed); now = T._now(); org = T._orgs(F['info'])
-    works, unnamed = {}, 0
-    for f in F['wz']:
-        p = f['properties']; cd = p.get('core_details', {})
-        if T._status(p, now) != 'active':
-            continue
-        d = T._dist(f, near_lat, near_lon)
-        if d is None or d > radius_mi:
-            continue
-        names = cd.get('road_names') or []
-        if not names:
-            unnamed += 1
-            continue
-        if any(_matches(street, n) for n in names):
-            works.setdefault(_work_id(f), []).append((d, f))
+    F, works, unnamed = _find(feed, street, near_lat, near_lon, radius_mi)
+    org = T._orgs(F['info'])
     n_rec = sum(len(v) for v in works.values())
     unk = sum(1 for v in works.values() for _, f in v if (f['properties'].get('vehicle_impact') or 'unknown') == 'unknown')
     head = (f"{street} within {radius_mi:g} mi of ({near_lat:.4f}, {near_lon:.4f}), {F['name']} feed updated "
@@ -142,6 +154,29 @@ def work_zones_on_street_plain(feed: str, street: str) -> str:
 
 TOOLS = [work_zones_on_street]
 READ_ONLY = {'work_zones_on_street'}
+
+# For the ablation's plain setup (contrib/ablation.py): your tools with the transportation knowledge taken out of
+# what the model reads. The search stays the same; only the words change.
+#   PLAIN_DESCRIPTIONS: each tool's description as any programmer would write it from the function signature alone
+#     (what it returns, its inputs, read-only), without what only a transportation engineer would add.
+#   RAW_RESULTS: for each tool, a function with the same inputs that returns the same data raw (here, the records as
+#     the feed gives them, in JSON), without the wording you designed (DESIGN.md, section 4).
+PLAIN_DESCRIPTIONS = {
+    'work_zones_on_street': 'Active work zones on a street. feed: feed name. street: street name. near_lat, near_lon: '
+                            'a point. radius_mi: search radius in miles. Read-only.',
+}
+
+
+@T._errors_as_text
+def work_zones_on_street_raw(feed: str, street: str, near_lat: float, near_lon: float, radius_mi: float = 5.0) -> str:
+    """The same search as work_zones_on_street, returned raw: the records as the feed gives them."""
+    F, works, unnamed = _find(feed, street, near_lat, near_lon, radius_mi) if _street_parts(street) else (T._load(feed), {}, 0)
+    records = [{'id': f.get('id'), **f['properties']} for recs in works.values() for _, f in recs]
+    return json.dumps({'feed': F['name'], 'update_date': F['info'].get('update_date'), 'records': records,
+                       'records_without_road_name': unnamed}, default=str)
+
+
+RAW_RESULTS = {'work_zones_on_street': work_zones_on_street_raw}
 
 if __name__ == '__main__':
     print(work_zones_on_street(*(sys.argv[1:3] or ['FL', 'Busch Blvd']), 28.0587, -82.4139))
