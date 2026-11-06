@@ -10,7 +10,7 @@ contractors update. Arizona's AZ511 feed is the second.
 
 **Want to write your own tool?** Read [`WRITING_TOOLS.md`](WRITING_TOOLS.md), then
 [`contrib/README.md`](contrib/README.md): each contribution is one folder, `contrib/<your-github-username>/`, sent as
-a pull request. Students in AI for Mobility: this is Assignment 6.
+a pull request. Students in AI for Mobility: this is Assignment 5.1.
 
 ## Quick start
 
