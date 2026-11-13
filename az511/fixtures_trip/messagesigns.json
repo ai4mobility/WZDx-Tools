@@ -1,0 +1,63 @@
+[
+ {
+  "Id": "S1",
+  "Name": "I-17 NB @ Happy Valley",
+  "Roadway": "I-17",
+  "DirectionOfTravel": "Northbound",
+  "Latitude": 33.71,
+  "Longitude": -112.11,
+  "Messages": [
+   "CRASH AHEAD\nSUNSET POINT\nALL LANES CLOSED"
+  ],
+  "LastUpdated": 1762354500
+ },
+ {
+  "Id": "S2",
+  "Name": "I-17 SB @ Carefree Hwy",
+  "Roadway": "I-17",
+  "DirectionOfTravel": "Southbound",
+  "Latitude": 33.8,
+  "Longitude": -112.12,
+  "Messages": [
+   "PHOENIX 25 MIN"
+  ],
+  "LastUpdated": 1762354500
+ },
+ {
+  "Id": "S3",
+  "Name": "I-17 NB @ Anthem",
+  "Roadway": "I-17",
+  "DirectionOfTravel": "Northbound",
+  "Latitude": 33.87,
+  "Longitude": -112.13,
+  "Messages": [
+   "",
+   " "
+  ],
+  "LastUpdated": 1762354500
+ },
+ {
+  "Id": "S4",
+  "Name": "I-17 NB @ Daisy Mtn",
+  "Roadway": "I-17",
+  "DirectionOfTravel": "Northbound",
+  "Latitude": 33.95,
+  "Longitude": -112.13,
+  "Messages": [
+   "NO_MESSAGE"
+  ],
+  "LastUpdated": 1762354500
+ },
+ {
+  "Id": "S5",
+  "Name": "I-17 NB @ Black Canyon City",
+  "Roadway": "I-17",
+  "DirectionOfTravel": "Northbound",
+  "Latitude": 34.0,
+  "Longitude": -112.13,
+  "Messages": [
+   "MINUTES TO\nSR-69 20\nFLAGSTAFF 99"
+  ],
+  "LastUpdated": 1762354500
+ }
+]

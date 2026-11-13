@@ -1,0 +1,17 @@
+[
+ {
+  "Id": 1858,
+  "CameraSource": "AZDOT",
+  "CameraSourceId": "e005def9-32b6-4b3b-9561-d97873ab6c37",
+  "Latitude": 34.579783465,
+  "Longitude": -113.492670501,
+  "AirTemperature": "96.6",
+  "SurfaceTemperature": "114.8",
+  "WindSpeed": "7.2",
+  "WindDirection": "SW",
+  "RelativeHumidity": "24",
+  "LevelOfGrip": "Good",
+  "MaxWindSpeed": "12.5",
+  "LastUpdated": 1752253380
+ }
+]

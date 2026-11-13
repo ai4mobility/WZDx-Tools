@@ -1,0 +1,19 @@
+[
+ {
+  "Id": 524,
+  "Message": "Interstate 10 westbound lanes are to be restricted from Baseline to Elliot roads",
+  "Notes": "<p dir=\"ltr\">PHOENIX &ndash;&nbsp;The westbound lanes of Interstate 10 ...</p>",
+  "StartTime": 1580761320,
+  "EndTime": 1580847660,
+  "LastUpdated": 1580847660,
+  "Regions": [
+   "Apache",
+   "Cochise",
+   "Maricopa",
+   "Pima",
+   "Yuma"
+  ],
+  "HighImportance": true,
+  "SendNotification": true
+ }
+]

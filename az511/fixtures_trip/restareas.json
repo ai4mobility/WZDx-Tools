@@ -1,0 +1,50 @@
+[
+ {
+  "Id": "R1",
+  "Name": "Sunset Point Rest Area (SB/NB)",
+  "Location": "I-17 MP 252",
+  "City": "Black Canyon City",
+  "Latitude": 34.198,
+  "Longitude": -112.128,
+  "Status": "Open",
+  "TotalTruckSpaces": "22",
+  "AvailableTruckSpaces": "8",
+  "Restroom": "Yes"
+ },
+ {
+  "Id": "R2",
+  "Name": "Sacaton",
+  "Location": "I-10 MP 181",
+  "City": "Sacaton",
+  "Latitude": 33.08,
+  "Longitude": -111.74,
+  "Status": "Open",
+  "TotalTruckSpaces": "30",
+  "AvailableTruckSpaces": "",
+  "Restroom": "Yes"
+ },
+ {
+  "Id": "R3",
+  "Name": "McGuireville Rest Area (SB)",
+  "Location": "I-17/ MP 297",
+  "City": "Rimrock",
+  "Latitude": 34.62,
+  "Longitude": -111.79,
+  "Status": "Open",
+  "TotalTruckSpaces": "20",
+  "AvailableTruckSpaces": "No Data",
+  "Restroom": "Yes"
+ },
+ {
+  "Id": "R4",
+  "Name": "McGuireville Rest Area (NB)",
+  "Location": "I-17/ MP 297",
+  "City": "Rimrock",
+  "Latitude": 34.63,
+  "Longitude": -111.78,
+  "Status": "Open",
+  "TotalTruckSpaces": "20",
+  "AvailableTruckSpaces": "No Data",
+  "Restroom": "Yes"
+ }
+]

@@ -11,6 +11,10 @@ contribution, gives the same answer on any computer. They belong to their publis
 - `snapshots/2026-11-05/registry.json` and `fixtures/registry.json`: USDOT's WZDx feed registry
   (datahub.transportation.gov, dataset 69qe-yiui), with every URL query string removed.
 - `fixtures/fldot.json.gz` and `fixtures/az511.json`: slices of the two feeds above (see `test_wzdx.py`).
+- `az511/fixtures/`: the sample responses printed in ADOT's AZ511 API documentation (az511.com/help/endpoint/*),
+  and `wzdx.json`, the same 400 Arizona work zones as `fixtures/az511.json`.
+- `az511/fixtures_trip/`: SYNTHETIC, made up for the tests (events, signs, weather, parking numbers and the picture
+  `cctv_1419.jpg`); only the places, road names and milepost directions are real.
 
 They are here for teaching and testing. Before you reuse them anywhere else, check each publisher's terms of use.
 Do not add other data to this repository unless you have the right to share it.

@@ -33,6 +33,7 @@ for `contrib/agent_loop.py`.
 | `fixtures/` | a Tampa-area slice of FDOT's feed (work zones within 8 mi of USF, one Miami work zone and its detours), 400 Arizona work zones, USDOT's feed registry with URL query strings removed |
 | `snapshots/2026-11-05/` | both feeds in full as read on Nov 5 2026 (Florida 09:21 EST, Arizona 06:53 MST), and the registry: the data every contribution is tested on |
 | `contrib/` | contributions, the template, `check.py` (what a pull request must pass) and `agent_loop.py` (watch a model use your tools) |
+| `az511/` | optional, not part of the assignment: ten tools over Arizona's 511 API (trip briefing, cameras around a crash); see [`az511/README.md`](az511/README.md) |
 
 ## The tools
 
@@ -73,21 +74,44 @@ minutes.
   one lane closure on East Busch Boulevard (the right travel lane of 3)
 
 Arizona (az511, WZDx 4.1, 06:53 MST): 3,443 work zones, lane impact unknown for 2,351 (68%), lane detail for 1,094,
-reduced speed for 332, no detours.
+reduced speed for 330, no detours. The feed sends no status, so status is read from the dates, and:
+- 525 work zones (15%) are past their planned end date, by a median of 1,168 days (over three years), yet the feed
+  still lists them, and 491 of them were updated within a day. The end date alone does not say the work is
+  finished, so the tools count these apart instead of calling them completed. (On Nov 13 2026: 546, 17%.)
+- 92 have a start date after their end date; the direction is "undefined" for 2,302 (67%); two work zones on I-10
+  send the speed limit as the text "NaN", and eleven send 0 km/h.
+- Phoenix's loops are written several ways: "202-LOOP" in most records, but also "SR-202", "SR-303" and
+  "Loop 303" in a few, and "SR-202" on ADOT's own camera labels.
 
 ## Design decisions (and the test that holds each)
 
-- Roads: 'I 75' = 'I-75' but not I-275; 'FL 434' = 'SR 434'. Street names match as plain text, so 'Busch Blvd'
+- Roads: 'I 75' = 'I-75' but not I-275; 'FL 434' = 'SR 434'; in Arizona, 'Loop 202' = '202-LOOP' = 'SR-202'
+  (Phoenix's loops are state routes; Florida's SR 202 is not a loop). Street names match as plain text, so 'Busch Blvd'
   finds only a record whose name field happens to say 'E Busch Blvd', and misses the one that says 'East Busch
   Boulevard' (the record with the lane closure): the template contribution shows how to do better.
 - Lanes: WZDx numbers lanes from the left (order 1 = left-most) and lists shoulders as lanes, so the Busch Boulevard
   record's 'lane 4 of 5 closed' is written 'right lane of 3 closed'.
-- Speed: WZDx stores km/h; the tools give mph (72.42 km/h -> 45 mph).
+- Speed: WZDx stores km/h; the tools give mph (72.42 km/h -> 45 mph). 'NaN' and 0 km/h are "not reported"
+  (before Nov 13 2026, one of Arizona's 'NaN' records made `get_work_zones('AZ', road='I-10')` return an error).
 - Time: Florida is Eastern except the panhandle west of the Apalachicola River (Central), approximated by
   longitude < -85.0 (Gulf County is split; not handled). Arizona is MST all year. Dates in another year show the year.
-- Status: WZDx 4.2 `event_status` when present (Florida lists completed work zones), otherwise the dates.
+- Status: WZDx 4.2 `event_status` when present (Florida lists completed work zones), otherwise the dates. A work
+  zone past its planned end in a feed with no status (Arizona's) is left out of 'active' but counted, and the
+  tools say so (`get_work_zones('AZ', road='I-10')` on the Nov 5 snapshot: "Not shown: 5 more past their planned
+  end date; this feed sends no status, so they may still be underway"). `feed_quality` reports them as "past
+  planned end", never as completed.
+- Direction: WZDx's 'undefined' and 'unknown' are written "direction not reported".
 - Honesty: 'lane impact unknown (not reported)', 'position not verified'; no reported work zone is "not proof there
   is none: trust the camera".
+
+## Arizona 511 tools (`az511/`, optional)
+
+Ten more tools, over ADOT's Arizona 511 API: road events, alerts, message signs, road weather, rest areas,
+cameras and work zones, plus three built on them. `get_trip_briefing` lists what a driver on one highway will
+meet, in order, in the driver's direction. `get_event_cameras` finds the cameras upstream of, at and downstream of
+a crash, working out which way the mileposts run. `look_at_camera` sends the camera's live picture to a model that
+can see images. They are an example of traffic engineering knowledge built into tools, not part of Assignment
+5.1, and live data needs a free AZ511 key. The findings from live data are in [`az511/README.md`](az511/README.md).
 
 ## Licenses
 

@@ -1,0 +1,18 @@
+[
+ {
+  "Id": 8,
+  "Latitude": 32.059722,
+  "Longitude": -110.076111,
+  "Name": "Texas Canyon Rest Area (EB)",
+  "Status": "Open",
+  "Location": "I-10 / MP 320",
+  "City": "Dragoon",
+  "Restroom": "Yes",
+  "Ramada": "Yes",
+  "VisitorCenter": "No",
+  "TravelInformation": "Yes",
+  "VendingMachine": "Yes",
+  "TotalTruckSpaces": "22",
+  "AvailableTruckSpaces": "8"
+ }
+]

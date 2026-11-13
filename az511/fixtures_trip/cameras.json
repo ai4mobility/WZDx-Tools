@@ -1,0 +1,178 @@
+[
+ {
+  "Id": 0,
+  "Roadway": "I-17",
+  "Location": "Anthem",
+  "Latitude": 33.86,
+  "Longitude": -112.13,
+  "Views": []
+ },
+ {
+  "Id": 1,
+  "Roadway": "I-17",
+  "Location": "Sunset Point",
+  "Latitude": 34.2,
+  "Longitude": -112.13,
+  "Views": []
+ },
+ {
+  "Id": 2,
+  "Roadway": "I-17",
+  "Location": "Camp Verde",
+  "Latitude": 34.56,
+  "Longitude": -111.86,
+  "Views": []
+ },
+ {
+  "Id": 3,
+  "Roadway": "I-17",
+  "Location": "Munds Park",
+  "Latitude": 34.94,
+  "Longitude": -111.64,
+  "Views": []
+ },
+ {
+  "Id": 10,
+  "Roadway": "I-10",
+  "Location": "I-10 @E of 24th St",
+  "Latitude": 33.4262,
+  "Longitude": -112.0238,
+  "Direction": "",
+  "Views": [
+   {
+    "Id": 1419,
+    "Url": "https://az511.com/map/Cctv/1419",
+    "Status": "Enabled",
+    "Description": "I-10 WB 150.30 @E of 24th St"
+   }
+  ]
+ },
+ {
+  "Id": 11,
+  "Roadway": "I-10",
+  "Location": "I-10 @Buckeye Road",
+  "Latitude": 33.4365,
+  "Longitude": -112.043,
+  "Direction": "",
+  "Views": [
+   {
+    "Id": 1258,
+    "Url": "https://az511.com/map/Cctv/1258",
+    "Status": "Enabled",
+    "Description": "I-10 NA 149.00 @Buckeye Road"
+   }
+  ]
+ },
+ {
+  "Id": 12,
+  "Roadway": "I-10",
+  "Location": "I-10 @Salt River Bridge",
+  "Latitude": 33.422,
+  "Longitude": -112.018,
+  "Direction": "",
+  "Views": [
+   {
+    "Id": 850,
+    "Url": "https://az511.com/map/Cctv/850",
+    "Status": "Enabled",
+    "Description": "I-10 EB 150.60 @Salt River Bridge"
+   }
+  ]
+ },
+ {
+  "Id": 13,
+  "Roadway": "I-17",
+  "Location": "I-17 @I-10 Split",
+  "Latitude": 33.43,
+  "Longitude": -112.03,
+  "Direction": "",
+  "Views": [
+   {
+    "Id": 895,
+    "Url": "https://az511.com/map/Cctv/895",
+    "Status": "Enabled",
+    "Description": "I-17 SB 194.20 @I-10 Split"
+   }
+  ]
+ },
+ {
+  "Id": 14,
+  "Roadway": "SR-202",
+  "Location": "SR-202 @McQueen Rd",
+  "Latitude": 33.283,
+  "Longitude": -111.823,
+  "Direction": "",
+  "Views": [
+   {
+    "Id": 2001,
+    "Url": "https://az511.com/map/Cctv/2001",
+    "Status": "Enabled",
+    "Description": "SR-202 WB 47.10 @McQueen Rd"
+   }
+  ]
+ },
+ {
+  "Id": 15,
+  "Roadway": "SR-202",
+  "Location": "SR-202 @Gilbert Rd",
+  "Latitude": 33.283,
+  "Longitude": -111.79,
+  "Direction": "",
+  "Views": [
+   {
+    "Id": 2002,
+    "Url": "https://az511.com/map/Cctv/2002",
+    "Status": "Enabled",
+    "Description": "SR-202 EB 45.00 @Gilbert Rd"
+   }
+  ]
+ },
+ {
+  "Id": 16,
+  "Roadway": "SR-202",
+  "Location": "SR-202 @Alma School Rd",
+  "Latitude": 33.284,
+  "Longitude": -111.858,
+  "Direction": "",
+  "Views": [
+   {
+    "Id": 2003,
+    "Url": "https://az511.com/map/Cctv/2003",
+    "Status": "Enabled",
+    "Description": "SR-202 WB 49.10 @Alma School Rd"
+   }
+  ]
+ },
+ {
+  "Id": 20,
+  "Roadway": "I-10",
+  "Location": "I-10 @5th Ave",
+  "Latitude": 33.461,
+  "Longitude": -112.079,
+  "Direction": "",
+  "Views": [
+   {
+    "Id": 834,
+    "Url": "https://az511.com/map/Cctv/834",
+    "Status": "Enabled",
+    "Description": "I-10 NA 144.80 @5th Ave"
+   }
+  ]
+ },
+ {
+  "Id": 21,
+  "Roadway": "I-10",
+  "Location": "I-10 @W of 7th Ave",
+  "Latitude": 33.46,
+  "Longitude": -112.085,
+  "Direction": "",
+  "Views": [
+   {
+    "Id": 831,
+    "Url": "https://az511.com/map/Cctv/831",
+    "Status": "Enabled",
+    "Description": "I-10 EB 144.40 @W of 7th Ave"
+   }
+  ]
+ }
+]

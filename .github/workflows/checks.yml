@@ -17,6 +17,7 @@ jobs:
       - run: pip install "mcp>=2"
       - run: python test_wzdx.py mcp
       - run: python contrib/_template/test_tools.py
+      - run: python az511/test_az511.py mcp
 
   contribution:
     # a pull request adds one folder, contrib/<author>/, and it must pass contrib/check.py

@@ -1,0 +1,41 @@
+[
+ {
+  "Id": "W1",
+  "Latitude": 34.93,
+  "Longitude": -111.64,
+  "AirTemperature": 30,
+  "SurfaceTemperature": 29,
+  "LevelOfGrip": "Medium",
+  "WindSpeed": 12,
+  "MaxWindSpeed": 25,
+  "WindDirection": "NW",
+  "RelativeHumidity": 80,
+  "LastUpdated": 1762354200
+ },
+ {
+  "Id": "W2",
+  "Latitude": 32.69,
+  "Longitude": -114.62,
+  "AirTemperature": 75,
+  "SurfaceTemperature": 90,
+  "LevelOfGrip": "Good",
+  "WindSpeed": 5,
+  "MaxWindSpeed": 9,
+  "WindDirection": "S",
+  "RelativeHumidity": 20,
+  "LastUpdated": 1762354200
+ },
+ {
+  "Id": "W3",
+  "Latitude": 34.4,
+  "Longitude": -111.5,
+  "AirTemperature": 50,
+  "SurfaceTemperature": 55,
+  "LevelOfGrip": "Good",
+  "WindSpeed": 5,
+  "MaxWindSpeed": 9,
+  "WindDirection": "S",
+  "RelativeHumidity": 20,
+  "LastUpdated": 1762354200
+ }
+]

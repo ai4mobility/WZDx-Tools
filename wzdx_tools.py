@@ -157,22 +157,25 @@ def _dist(f, lat, lon):
     return min(ds) if ds else None
 
 
-def _norm_road(s):
-    """'I 75' / 'Interstate 75' -> 'I-75'; 'FL 434' / 'SR 434' / 'State Road 434' -> 'SR-434'; 'Loop 101' -> 'L-101'."""
+def _norm_road(s, arizona=False):
+    """'I 75' / 'Interstate 75' -> 'I-75'; 'FL 434' / 'SR 434' / 'State Road 434' -> 'SR-434'; 'Loop 101' -> 'L-101'.
+    arizona: Phoenix's loops are state routes, and ADOT writes them both ways ('202-LOOP', 'SR-202'): there,
+    SR-101, SR-202 and SR-303 are L-101, L-202 and L-303. (Florida's SR 202 in Jacksonville is not a loop.)"""
     s = ' ' + (s or '').upper().replace('’', "'") + ' '
     s = re.sub(r'\bINTERSTATE\s*', 'I-', s)
-    s = re.sub(r'\bSTATE\s+ROAD\s*', 'SR ', s)
+    s = re.sub(r'\bSTATE\s+ROA?D\s*|\bSTATE\s+ROUTE\s*', 'SR ', s)
     s = re.sub(r'\bFL\s*-?\s*(\d{1,3})\b', r'SR-\1', s)
     s = re.sub(r'\b(\d{2,3})\s*-?\s*LOOP\b', r'L-\1', s)
     s = re.sub(r'\bLOOP\s*-?\s*(\d{2,3})\b', r'L-\1', s)
     s = re.sub(r'\b(I|US|SR|CR|L)\s*-?\s*(\d{1,3}[A-Z]?)\b', r'\1-\2', s)
+    if arizona: s = re.sub(r'\bSR-(101|202|303)\b', r'L-\1', s)
     return re.sub(r'\s+', ' ', s).strip()
 
 
-def _road_match(query, *fields):
+def _road_match(query, *fields, arizona=False):
     if not query: return True
-    q = _norm_road(query)
-    text = ' ' + ' | '.join(_norm_road(f) for f in fields if f) + ' '
+    q = _norm_road(query, arizona)
+    text = ' ' + ' | '.join(_norm_road(f, arizona) for f in fields if f) + ' '
     if re.match(r'^(I|US|SR|CR|L)-\d', q):
         return re.search(r'(?<![A-Z0-9-])' + re.escape(q) + r'(?![0-9A-Z])', text) is not None
     return q in text                                   # a street name: 'FOWLER', 'BUSCH BOULEVARD'
@@ -201,7 +204,11 @@ def _lanes_text(lanes):
 
 
 def _mph(kph):
-    return round(kph / 1.609344) if kph is not None else None
+    """km/h -> mph, or None when the feed sends no usable limit: on Nov 5 2026 Arizona sent the text 'NaN' for two
+    work zones on I-10, and 0 km/h for eleven."""
+    try: v = float(kph)
+    except (TypeError, ValueError): return None
+    return round(v / 1.609344) if math.isfinite(v) and v > 0 else None
 
 
 def _status(p, now):
@@ -211,6 +218,18 @@ def _status(p, now):
     if a and now < a: return 'pending'
     if b and now > b: return 'completed'
     return 'active'
+
+
+def _past_end(p, now):
+    """Read as 'completed' only because its planned end date has passed: the feed sends no status. Arizona's feed
+    (WZDx 4.1) sends none, and on Nov 5 2026 it still listed 525 work zones past their planned end, by a median of
+    1,168 days, 491 of them updated within a day. So the date alone does not say the work is finished."""
+    return not p.get('event_status') and _status(p, now) == 'completed'
+
+
+def _arizona(feed_name):
+    try: return (_registry().get(feed_name) or {}).get('state', '').lower() == 'arizona'
+    except Exception: return feed_name == 'az511'
 
 
 def _orgs(info):
@@ -225,13 +244,13 @@ def _describe(f, feed, org, detours, d=None):
     names = list(dict.fromkeys(n for n in names if n))
     names = [a for a in names if not any(a != b and a.startswith(b + ',') for b in names)]   # 'A' and 'A, Tampa'
     roads = ', '.join(names) or 'road not named'
-    dirn = cd.get('direction') if cd.get('direction') not in (None, '', 'unknown') else 'direction not reported'
+    dirn = cd.get('direction') if cd.get('direction') not in (None, '', 'unknown', 'undefined') else 'direction not reported'
     imp = p.get('vehicle_impact') or 'unknown'
     imp = 'lane impact unknown (not reported)' if imp == 'unknown' else imp.replace('-', ' ')
     bits = [f"- {roads} · {dirn}" + ('' if d is None else f' · {d:.1f} mi away'), imp]
     lt = _lanes_text(p.get('lanes'))
     if lt: bits.append(lt)
-    if p.get('reduced_speed_limit_kph'): bits.append(f"reduced limit {_mph(p['reduced_speed_limit_kph'])} mph")
+    if _mph(p.get('reduced_speed_limit_kph')): bits.append(f"reduced limit {_mph(p['reduced_speed_limit_kph'])} mph")
     wk = p.get('worker_presence') or {}
     if 'are_workers_present' in wk: bits.append('workers present' if wk['are_workers_present'] else 'no workers reported')
     lines = [' · '.join(bits)]
@@ -240,7 +259,8 @@ def _describe(f, feed, org, detours, d=None):
     src = org.get(cd.get('data_source_id'), cd.get('data_source_id'))
     ver = 'position not verified' if not p.get('is_start_position_verified') else 'position verified'
     dv = 'dates verified' if p.get('is_start_date_verified') else 'dates not verified'
-    lines.append(f"  {_local(p.get('start_date'), feed, lon)} to {_local(p.get('end_date'), feed, lon)} · "
+    late = ' (planned end passed; the feed sends no status, so it may still be underway)' if _past_end(p, _now()) else ''
+    lines.append(f"  {_local(p.get('start_date'), feed, lon)} to {_local(p.get('end_date'), feed, lon)}{late} · "
                  f"reported by {src} · {ver}, {dv} · id {f.get('id', '?')}")
     nd = len(detours.get(str(f.get('id')), []))
     if nd: lines.append(f'  {nd} posted detour route(s): call get_detours with this id')
@@ -268,28 +288,38 @@ def get_work_zones(feed: str, road: Optional[str] = None, near_lat: Optional[flo
                    near_lon: Optional[float] = None, radius_mi: float = 5.0, status: str = 'active',
                    max_results: int = 10) -> str:
     """Work zones from a WZDx feed ('FL', 'AZ' or a name from list_feeds), filtered by road ('I-75', 'SR 434',
-    'Fowler Avenue') and/or a point and a radius in miles. status: 'active' (default), 'pending', 'completed' or
-    'all'. Each work zone: road, direction, distance, lane impact, closed lanes, reduced speed limit in mph,
+    'Fowler Avenue', 'Loop 202') and/or a point and a radius in miles. status: 'active' (default), 'pending',
+    'completed' or 'all'; a feed that sends no status (Arizona's) is read from the dates, and there 'completed'
+    means only that the planned end date has passed. Each work zone: road, direction, distance, lane impact, closed lanes, reduced speed limit in mph,
     workers, the reporting organization, local start and end times, and whether its position and dates were
     verified. Most entries say lane impact unknown: report that as unknown, never as open lanes. Read-only."""
     F = _load(feed); now = _now(); org = _orgs(F['info'])
     if status not in ('active', 'pending', 'completed', 'all'):
         return "Error: status must be 'active', 'pending', 'completed' or 'all'."
-    keep = []
+    keep, late, az = [], 0, _arizona(F['name'])
     for f in F['wz']:
         p = f['properties']; cd = p.get('core_details', {})
-        if status != 'all' and _status(p, now) != status: continue
-        if not _road_match(road, *(cd.get('road_names') or []), cd.get('name'), cd.get('description')): continue
+        if status != 'all' and _status(p, now) != status and not (status == 'active' and _past_end(p, now)): continue
+        if not _road_match(road, *(cd.get('road_names') or []), cd.get('name'), cd.get('description'), arizona=az): continue
         d = None
         if near_lat is not None and near_lon is not None:
             d = _dist(f, near_lat, near_lon)
             if d is None or d > radius_mi: continue
+        if status == 'active' and _status(p, now) != 'active':
+            late += 1; continue                        # past its planned end in a feed with no status: counted
         keep.append((d, f))
     keep.sort(key=lambda x: (x[0] if x[0] is not None else 0, x[1]['properties'].get('start_date') or ''))
     unk = sum(1 for _, f in keep if (f['properties'].get('vehicle_impact') or 'unknown') == 'unknown')
-    head = (f"{len(keep)} {status if status != 'all' else ''} work zone(s) match in the {F['name']} feed "
+    word = '' if status == 'all' else status
+    if status == 'completed' and any(_past_end(f['properties'], now) for _, f in keep):
+        word = 'completed (or past their planned end)'
+    head = (f"{len(keep)} {word} work zone(s) match in the {F['name']} feed "
             f"(WZDx {F['info'].get('version', '?')}, updated {_local(F['info'].get('update_date'), F['name'], -82.0)}); "
             f"showing {min(len(keep), max_results)}. Lane impact unknown for {unk} of {len(keep)}.")
+    if late:
+        head += (f" Not shown: {late} more past " + ("its planned end date; this feed sends no status, so it may"
+                 if late == 1 else "their planned end date; this feed sends no status, so they may") +
+                 " still be underway (status='completed' lists them).")
     lines = [re.sub(r'\s+', ' ', head)]
     for d, f in keep[:max_results]:
         lines += _describe(f, F['name'], org, F['detours'], d)
@@ -303,16 +333,20 @@ def check_location(feed: str, lat: float, lon: float, radius_mi: float = 0.5) ->
     is reported. 'None reported' does not mean none exists: feeds miss work zones, and positions are often
     estimated. Read-only."""
     F = _load(feed); now = _now(); org = _orgs(F['info'])
-    near = []
+    near, late = [], []
     for f in F['wz']:
-        if _status(f['properties'], now) != 'active': continue
+        active, past = _status(f['properties'], now) == 'active', _past_end(f['properties'], now)
+        if not (active or past): continue
         d = _dist(f, lat, lon)
-        if d is not None and d <= radius_mi: near.append((d, f))
-    near.sort(key=lambda x: x[0])
+        if d is not None and d <= radius_mi: (near if active else late).append((d, f))
+    near.sort(key=lambda x: x[0]); late.sort(key=lambda x: x[0])
+    also = (f' {len(late)} more listed within {radius_mi} mi ' + ('is past its planned end date; the feed sends no '
+            'status, so it may' if len(late) == 1 else 'are past their planned end date; the feed sends no status, so '
+            'they may') + f' still be underway (nearest {late[0][0]:.2f} mi, id {late[0][1].get("id", "?")}).') if late else ''
     if not near:
-        return (f'No active work zone is reported within {radius_mi} mi of ({lat:.5f}, {lon:.5f}) in the {F["name"]} feed. '
-                'That is not proof there is none: if the camera sees cones, barrels or workers, trust the camera.')
-    lines = [f'{len(near)} active work zone(s) reported within {radius_mi} mi of ({lat:.5f}, {lon:.5f}):']
+        return (f'No active work zone is reported within {radius_mi} mi of ({lat:.5f}, {lon:.5f}) in the {F["name"]} feed.'
+                f'{also} That is not proof there is none: if the camera sees cones, barrels or workers, trust the camera.')
+    lines = [f'{len(near)} active work zone(s) reported within {radius_mi} mi of ({lat:.5f}, {lon:.5f}):{also}']
     for d, f in near[:5]:
         lines += _describe(f, F['name'], org, F['detours'], d)
     return '\n'.join(lines)
@@ -340,7 +374,8 @@ def feed_quality(feed: str) -> str:
     organizations, and when it was updated. Use it before trusting a feed for a study or a product. Read-only."""
     F = _load(feed); now = _now(); P = [f['properties'] for f in F['wz']]; n = len(P) or 1
     from collections import Counter
-    st = Counter(_status(p, now) for p in P)
+    st = Counter('past planned end' if _past_end(p, now) else _status(p, now) for p in P)
+    late = sorted((now - _ts(p['end_date'])).days for p in P if _past_end(p, now))
     org = _orgs(F['info']); src = Counter(org.get(p['core_details'].get('data_source_id'), p['core_details'].get('data_source_id')) for p in P)
     pct = lambda k: f'{k:,} ({100 * k / n:.0f}%)'
     lines = [f"{F['name']}: WZDx {F['info'].get('version', '?')}, published by {F['info'].get('publisher', '?')}, "
@@ -348,12 +383,17 @@ def feed_quality(feed: str) -> str:
              f"- {len(P):,} work zones ({', '.join(f'{k} {v:,}' for k, v in st.most_common())}) and "
              f"{sum(len(v) for v in F['detours'].values()):,} detour routes; {F['n_features']:,} features in all.",
              f"- lane impact unknown: {pct(sum(1 for p in P if (p.get('vehicle_impact') or 'unknown') == 'unknown'))}",
+             f"- start date after the end date: {pct(sum(1 for p in P if _ts(p.get('start_date')) and _ts(p.get('end_date')) and _ts(p['start_date']) > _ts(p['end_date'])))}",
              f"- start position verified: {pct(sum(1 for p in P if p.get('is_start_position_verified')))}; "
              f"start date verified: {pct(sum(1 for p in P if p.get('is_start_date_verified')))}",
              f"- no road name: {pct(sum(1 for p in P if not p['core_details'].get('road_names')))}",
              f"- lane-by-lane detail: {pct(sum(1 for p in P if p.get('lanes')))}; workers reported: "
-             f"{pct(sum(1 for p in P if p.get('worker_presence')))}; reduced speed limit: {pct(sum(1 for p in P if p.get('reduced_speed_limit_kph')))}",
+             f"{pct(sum(1 for p in P if p.get('worker_presence')))}; reduced speed limit: {pct(sum(1 for p in P if _mph(p.get('reduced_speed_limit_kph'))))}",
              f"- top reporting organizations: {', '.join(f'{k} {v:,}' for k, v in src.most_common(5))}"]
+    if late:
+        lines.insert(2, f"- past planned end: {pct(len(late))}, by a median of {late[len(late) // 2]:,} days. This feed "
+                        f"sends no status, so status is read from the dates, and the end date alone does not say the "
+                        f"work is finished: the feed still lists them.")
     return '\n'.join(lines)
 
 

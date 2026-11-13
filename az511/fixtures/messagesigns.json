@@ -1,0 +1,14 @@
+[
+ {
+  "Id": "AZ--4e03c74f-6856-469f-ae83-ae62c9498227",
+  "Name": "L-202 EB @ 52nd St",
+  "Roadway": "L-202",
+  "DirectionOfTravel": "Eastbound",
+  "Messages": [
+   "MINUTES TO\r\nL-101            6\r\nL-101/US-60      9"
+  ],
+  "Latitude": 33.455615,
+  "Longitude": -111.973848,
+  "LastUpdated": 1580761737
+ }
+]

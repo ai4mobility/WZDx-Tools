@@ -1,0 +1,31 @@
+[
+ {
+  "ID": 2,
+  "SourceId": "347507",
+  "Organization": "Tucson",
+  "RoadwayName": "AJO WASH BRIDGE CLOSURE, AJO ARIZONA, TUESDAY, MARCH 26",
+  "DirectionOfTravel": null,
+  "Description": "AJO WASH BRIDGE CLOSURE",
+  "Reported": 1711350000,
+  "LastUpdated": 1711403411,
+  "StartDate": 1711350000,
+  "PlannedEndDate": 1830236400,
+  "LanesAffected": "No Data",
+  "Latitude": 32.373894,
+  "Longitude": -112.866019,
+  "LatitudeSecondary": null,
+  "LongitudeSecondary": null,
+  "EventType": "roadwork",
+  "EventSubType": null,
+  "IsFullClosure": false,
+  "Severity": "",
+  "Restrictions": {
+   "Width": null,
+   "Height": null,
+   "Length": null,
+   "Weight": null,
+   "Speed": null
+  },
+  "LaneCount": null
+ }
+]

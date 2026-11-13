@@ -1,0 +1,22 @@
+[
+ {
+  "Message": "I-17 northbound: expect delays at Sunset Point",
+  "Regions": [
+   "Yavapai"
+  ],
+  "StartTime": 1762351200,
+  "EndTime": 1762441200,
+  "HighImportance": true,
+  "LastUpdated": 1762351200
+ },
+ {
+  "Message": "SR 89A closed between mileposts 387 and 390",
+  "Regions": [
+   "Coconino"
+  ],
+  "StartTime": 1762351200,
+  "EndTime": 1762441200,
+  "HighImportance": false,
+  "LastUpdated": 1762351200
+ }
+]

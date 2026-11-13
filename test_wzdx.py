@@ -23,6 +23,11 @@ for q, field, want in [('I-75', 'I 75', True), ('I-75', 'I-275', False), ('I 275
                        ('SR 434', 'FL 419;FL 434', True), ('SR-43', 'FL 434', False), ('US-41', 'US 41', True),
                        ('Busch Boulevard', 'East Busch Boulevard, Tampa, Florida', True), ('L-101', '101-LOOP', True)]:
     check(f'road {q!r} vs {field!r} -> {want}', T._road_match(q, field) == want)
+# Arizona writes its Phoenix loops both ways ('202-LOOP', 'SR-202'); Florida's SR 202 is not a loop
+for q, field, want in [('SR-202', '202-LOOP', True), ('Loop 303', 'SR-303 FRONTAGE', True),
+                       ('State Route 101', '101-LOOP Southbound', True), ('SR 17', 'I-17', False)]:
+    check(f'Arizona road {q!r} vs {field!r} -> {want}', T._road_match(q, field, arizona=True) == want)
+check("Florida: 'L-202' is not 'SR-202'; 'SR 202' still is", not T._road_match('L-202', 'SR-202') and T._road_match('SR 202', 'SR-202'))
 
 # 2. lanes: WZDx counts from the left and lists shoulders as lanes
 S, G = 'shoulder', 'general'
@@ -38,6 +43,7 @@ check('right shoulder only', T._lanes_text(sh) == 'right shoulder closed', T._la
 
 # 3. units and time
 check('72.42 km/h -> 45 mph', T._mph(72.42) == 45)
+check("no usable limit: Arizona's 'NaN' text and 0 km/h are not reported, not an error", [T._mph(x) for x in ('NaN', 0, None, '72.42')] == [None, None, None, 45])
 check('Tampa: Eastern time', T._local('2026-11-05T14:21:00Z', 'fldot', -82.4).endswith('EST'))
 check('Pensacola: Central time', T._local('2026-11-05T14:21:00Z', 'fldot', -87.2).endswith('CST'))
 check('Arizona: MST in July', T._local('2026-07-01T12:00:00Z', 'az511', -112.0).endswith('MST'))
@@ -62,6 +68,30 @@ out = T.get_work_zones('FL', status='open')
 check('bad status: an error the model can read', out.startswith("Error: status must be"), out)
 out = T.get_work_zones('AZ', road='I-17', status='all', max_results=2)
 check('Arizona feed through the same tool', 'az511 feed' in out and 'MST' in out, out)
+out = T.get_work_zones('AZ', status='all', max_results=400)
+check("Arizona's direction 'undefined' is written 'direction not reported'", ' · undefined' not in out and 'direction not reported' in out)
+a, b = T.get_work_zones('AZ', road='SR 101', status='all'), T.get_work_zones('AZ', road='Loop 101', status='all')
+check("Arizona: 'SR 101' and 'Loop 101' find the same work zones", a.split(' match')[0] == b.split(' match')[0] and not a.startswith('0 '), (a[:80], b[:80]))
+
+# 5. Arizona's feed sends no status: past the planned end date is not 'completed'
+import re
+out = T.feed_quality('AZ')
+check('quality: Arizona sends no status; past planned end counted, not called completed',
+      'past planned end' in out and 'sends no status' in out and 'completed' not in out.split('\n')[1], out)
+check('quality: Florida sends a status, so nothing is read from the dates', 'past planned end' not in T.feed_quality('FL'))
+check('quality: start dates after end dates counted', 'start date after the end date' in out, out)
+act, done = T.get_work_zones('AZ', max_results=0), T.get_work_zones('AZ', status='completed', max_results=1)
+m = re.search(r'Not shown: (\d+) more past', act)
+check("active list counts what it hides, and status='completed' lists exactly those",
+      m and done.startswith(m.group(1) + ' completed (or past their planned end)'), (act, done[:120]))
+check('a work zone past its planned end says so next to its dates', 'planned end passed' in done, done)
+F = T._load('AZ'); now = T._now()
+late = next(f for f in F['wz'] if T._past_end(f['properties'], now))
+lon, lat = T._pts(late)[0][:2]
+out = T.check_location('AZ', lat, lon, radius_mi=0.05)
+check('check_location: none active, but one listed past its planned end is named, and the camera still wins',
+      out.startswith('No active work zone') and 'past its planned end' in out and 'trust the camera' in out, out)
+
 out = T.get_work_zones('XX')
 check('unknown feed: points to list_feeds', 'Error' in out and 'list_feeds' in out, out)
 
