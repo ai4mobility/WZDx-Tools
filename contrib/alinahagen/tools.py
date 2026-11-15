@@ -243,12 +243,58 @@ def work_zones_during_hours(
     radius_mi: float = 1.0, start_hour: int = 11, end_hour: int = 14,
     check_date: str = None,
 ) -> str:
-    """Screen active/pending records by street, radius, and an actual local date/time.
-
-    check_date: YYYY-MM-DD, default local today. Windows crossing midnight
-    are supported (e.g. 22 to 2). Active/pending is the feed's status *now*,
-    not a prediction of status on a future day. Read-only.
     """
+    Identify existing work-zone conflicts when a user is planning to issue a road-closure permit 
+    for a specified street, location, and time window.
+
+    USE THIS TOOL when the user asks if there are  road closures, construction 
+    projects, or work zones that might conflict with a proposed closure. 
+
+    PREFER THIS TOOL over general toolkit functions such as get_work_zones
+    when the question concerns scheduling conflicts or permit evaluation.
+    Unlike tools from the general toolkit, this tool evaluates reported
+    work-zone dates and times against the requested window and identifies
+    potential conflicts. Use general toolkit functions when the user needs
+    raw work-zone records rather than a conflict assessment.
+
+    REQUIRED INPUTS:
+        feed:       WZDx feed identifier, such as 'FL' for Florida.
+        street:     Street name provided by the user, such as 'Kennedy Blvd'.
+        near_lat:   Verified latitude in decimal degrees.
+        near_lon:   Verified longitude in decimal degrees.
+        radius_mi:  Search radius in miles (default 1.0).
+        start_hour: Beginning of requested local-time window, 24-hour
+                    format (default 11).
+        end_hour:   End of requested local-time window, 24-hour
+                    format (default 14).
+        check_date: Date in YYYY-MM-DD format. Defaults to local today.
+
+    GEOGRAPHIC VALIDATION:
+        Use latitude and longitude when supplied by the user or
+        verified through an appropriate geocoding or location tool.
+        NEVER invent, estimate, or assume geographic coordinates.
+        If coordinates cannot be reliably established, ask the user
+        to provide them rather than evaluating a potentially wrong
+        location. It is better to ask a clarifying question than guess
+
+    INTERPRETING RESULTS:
+        The tool screens active and pending work-zone records for
+        geographic and temporal overlap. It does not establish
+        whether a road is free of construction. A result with zero 
+        matches just means that are no matching conflicts, NOT that a
+        permit is automatically safe to approve.
+
+    LIMITATIONS:
+        This tool does NOT approve or deny permits.
+        It does NOT calculate traffic delay, travel-time increases,
+        queue lengths, or roadway capacity reductions.
+        For questions about the number or types of lanes currently
+        closed nearby, use lane_closure_traffic_impact.
+        No tools in the toolkit can anwser travel times questions
+
+    Read-only.
+    """
+
     F, start, end, nearby, rows = _workzone_results(
         feed, street, near_lat, near_lon, radius_mi, start_hour, end_hour, check_date)
     overlapping = [r for r in rows if r[4] == 'overlap']
@@ -347,11 +393,57 @@ def _impact_results(feed, near_lat, near_lon, radius_mi):
 def lane_closure_traffic_impact(
     feed: str, near_lat: float, near_lon: float, radius_mi: float = 0.5,
 ) -> str:
-    """Report active nearby projects and *reported lane entries* by type.
-
-    This does not establish physical corridor-wide capacity loss or the exact
-    number of unique blocked lanes. Read-only.
     """
+    Identify existing lane closures near a proposed road-closure permit
+    location and report the types of lanes currently affected.
+
+    USE THIS TOOL when you need to answer how many lanes are currently closed
+    near a given location, if multiple construction projects are active
+    nearby, or if existing lane restrictions might make approving new permits
+    in this area unwise. 
+
+    PREFER THIS TOOL over general toolkit functions such as get_work_zones
+    when the question concerns existing lane closures or the potential
+    burden of additional construction. Unlike general work-zone lookup
+    tools, this function groups records by work ID, distinguishes general
+    travel lanes from supplemental lanes, and flags multiple nearby
+    construction projects.
+
+    REQUIRED INPUTS:
+        feed:       WZDx feed identifier, such as 'FL' for Florida.
+        near_lat:   Verified latitude in decimal degrees.
+        near_lon:   Verified longitude in decimal degrees.
+        radius_mi:  Search radius in miles (default 0.5).
+
+    GEOGRAPHIC VALIDATION:
+        Use latitude and longitude supplied by the user or verified
+        through an appropriate geocoding or location tool.
+        NEVER invent, estimate, or assume geographic coordinates.
+        If coordinates cannot be reliably established, ask the user
+        to provide them instead of guessing.
+
+    INTERPRETING RESULTS:
+        The tool reports active work-zone records within the specified
+        radius and groups records belonging to the same work ID.
+        General lanes are lanes used for vehicle travel, while
+        supplemental lanes include shoulders, parking lanes, and
+        other non-mainline lane types.
+        Multiple active works within a radius indicate possible
+        overlapping construction impacts, but do not prove that
+        the projects affect the same road, direction, or segment.
+
+    LIMITATIONS:
+        This tool does NOT approve or deny permits.
+        It does NOT calculate actual traffic capacity reductions,
+        vehicle delays, queue lengths, or travel-time increases.
+        For questions about whether existing work zones overlap
+        a proposed closure's date and time, use
+        work_zones_during_hours.
+        No tools in the toolkit can anwser travel times questions
+
+    Read-only.
+    """
+
     F, hits, projects = _impact_results(feed, near_lat, near_lon, radius_mi)
     org = T._orgs(F['info'])
     total = _classify_lanes(hits)
