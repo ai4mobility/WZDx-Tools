@@ -292,11 +292,22 @@ def work_zones_during_hours(
             lines.append(f'    Vehicle impact: {p.get("vehicle_impact") or "not reported"}; note: {reason}')
     lines += ['', 'SCREENING INTERPRETATION']
     if overlapping:
-        lines.append(f'  REVIEW: {len(overlapping)} matching record(s) overlap the requested date/time.')
+        lines.append(f'  REVIEW: {len(overlapping)} matching record(s) overlap the requested date/time window.')
+        lines.append('  Conflict detected. Consider shifting the requested window or date.')
     elif uncertain:
         lines.append('  INDETERMINATE: matching record dates are incomplete; review source data.')
     else:
-        lines.append('  No confirmed overlapping records identified; this does not verify the street is clear.')
+        nearby_work_count = len(set(_work_id(f) for _, _, f, _ in nearby))
+        if nearby_work_count >= 3:
+            lines.append('  No confirmed conflicts on this street, but high concurrent activity nearby.')
+            lines.append('  Consider field verification before permit issue, or depending on work need severity, postpone.')
+        else:
+            nearby_work_count = len(set(_work_id(f) for _, _, f, _ in nearby))
+            if nearby_work_count >= 3:
+                lines.append('  No confirmed conflicts on this street, but high concurrent activity nearby.')
+                lines.append('  Consider field verification before permit issue, or depending on work need severity, postpone.')
+            else:
+                lines.append('  Based on current information, permit can proceed as planned.')
     if uncertain and overlapping:
         lines.append(f'  Also review {len(uncertain)} matching record(s) with uncertain timing.')
     lines.append('  Verify coverage, lane restrictions, and field conditions before permit approval.')
