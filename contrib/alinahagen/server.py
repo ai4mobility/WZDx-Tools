@@ -41,10 +41,13 @@ TOOLKIT_INSTRUCTIONS = (
     'from list_feeds. Times are local. Most work zones do not report lane impact and none has a verified position: '
     'say "unknown" and "reported", never "open" or "confirmed". No reported work zone does not mean none exists.')
 MY_INSTRUCTIONS = (
-    # ---- your part: what your tools add, and when to use them
-    'For a street name (Busch Blvd, N 30th St), use work_zones_on_street with a point near the place: it reads '
-    'street names the way people write them and counts works rather than records. For route numbers use '
-    'get_work_zones.')
+    'For meal-hour conflict checks on a named street, use work_zones_during_hours with feed, street, '
+    'a point near the location, and start_hour/end_hour in local 24-h time (lunch: 11-14, dinner: 18-21). '
+    'It filters by event_status (active and pending only) and converts UTC dates to local time. '
+    'For corridor-wide lane impact — especially when multiple works may be compounding — use '
+    'lane_closure_traffic_impact with a point and radius_mi. It separates general travel lanes from '
+    'shoulder/parking and flags when more than one work zone is active in the same area. '
+    'WZDx contains no traffic volume data; time windows must be supplied by the caller.')
 INSTRUCTIONS = TOOLKIT_INSTRUCTIONS + (' ' + MY_INSTRUCTIONS if ABLATION == 'full' else '')
 
 server = Server('wzdx-' + os.path.basename(HERE), instructions=INSTRUCTIONS)
