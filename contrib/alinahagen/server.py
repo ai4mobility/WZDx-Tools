@@ -41,13 +41,15 @@ TOOLKIT_INSTRUCTIONS = (
     'from list_feeds. Times are local. Most work zones do not report lane impact and none has a verified position: '
     'say "unknown" and "reported", never "open" or "confirmed". No reported work zone does not mean none exists.')
 MY_INSTRUCTIONS = (
-    'For meal-hour conflict checks on a named street, use work_zones_during_hours with feed, street, '
-    'a point near the location, and start_hour/end_hour in local 24-h time (lunch: 11-14, dinner: 18-21). '
-    'It filters by event_status (active and pending only) and converts UTC dates to local time. '
-    'For corridor-wide lane impact — especially when multiple works may be compounding — use '
-    'lane_closure_traffic_impact with a point and radius_mi. It separates general travel lanes from '
-    'shoulder/parking and flags when more than one work zone is active in the same area. '
-    'WZDx contains no traffic volume data; time windows must be supplied by the caller.')
+    'For permit screening questions — checking whether a planned road closure conflicts with existing work zones — '
+    'use work_zones_during_hours. It requires: feed (use "FL" for Florida), street name, near_lat and near_lon '
+    '(coordinates near the named street; if not given, ask the caller for them), radius_mi, and start_hour/end_hour '
+    'in local 24-h time (lunch: 11-14, dinner: 18-21). It filters to active and pending records only and converts '
+    'UTC feed dates to local time. Do not use get_work_zones or check_location for permit screening. '
+    'For corridor-wide lane impact — how many general travel lanes are closed nearby — use '
+    'lane_closure_traffic_impact with near_lat, near_lon, and radius_mi. It separates general travel lanes from '
+    'shoulder/parking and flags when multiple work zones are compounding in the same area. '
+    'WZDx contains no traffic volume data; time windows must be supplied by the caller. ')
 INSTRUCTIONS = TOOLKIT_INSTRUCTIONS + (' ' + MY_INSTRUCTIONS if ABLATION == 'full' else '')
 
 server = Server('wzdx-' + os.path.basename(HERE), instructions=INSTRUCTIONS)
