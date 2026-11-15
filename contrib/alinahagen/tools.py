@@ -1,111 +1,239 @@
+"""Road-work screening tools for a permit office using WZDx feeds.
+
+Two registered read-only tools:
+  1. work_zones_during_hours: street-specific, date/time conflict screening.
+  2. lane_closure_traffic_impact: nearby active works and reported lane restrictions.
+
+Each has a simple plain baseline and a JSON raw-result counterpart. The raw
+counterparts return underlying feed records plus screening metadata.
+
+Limitations: WZDx records may be incomplete. These are screening tools, not
+proof of roadway clearance or calculated traffic capacity/delay.
 """
-Alina Hagen – contrib/alinahagen/tools.py
 
-Two designed tools for a city permit office evaluating traffic impact
-of road closures near commercial districts during meal hours.
-
-Tool 1: work_zones_during_hours
-  Checks whether active/pending work zones on a street overlap a chosen
-  time window (e.g. lunch 11–14, dinner 18–21). WZDx stores dates as UTC;
-  this tool converts to local time before comparing, and treats a missing
-  end_date as an indefinite closure.
-
-Tool 2: lane_closure_traffic_impact
-  Reports the lane-closure burden in a corridor, distinguishing general
-  (mainline travel) lanes from shoulder/parking, and flagging when
-  multiple simultaneous zones compound capacity loss.
-"""
-# AI Use Disclourse: This tool code was generated with Claude 
-# I have gone through the code and added comments to keep track of my understanding
-# of functions. 
-
-import os, sys, re, json
-from datetime import datetime, timezone, timedelta
+import json
+import os
+import re
+import sys
+from collections import defaultdict
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import wzdx_tools as T
 
-# WZDx LaneType values that represent mainline travel lanes (source: WZDx
-# spec LaneType enumerated type, usdot-jpo-ode/wzdx).
+# Use actual time zones, including daylight-saving rules (not longitude / 15).
+FEED_TIME_ZONES = {'FL': 'America/New_York', 'FLDOT': 'America/New_York',
+                   'AZ': 'America/Phoenix'}
 GENERAL_LANE_TYPES = {
     'general', 'center-left-turn', 'exit-ramp', 'entrance-ramp',
     'hov', 'alternating-flow',
 }
-# Supplemental lane types that do not carry through traffic.
 SUPPLEMENTAL_LANE_TYPES = {
     'shoulder', 'median', 'parking', 'bike-lane', 'sidewalk',
     'two-way-center-turn-lane', 'exit-lane', 'entrance-lane',
 }
+STREET_WORDS = {
+    'blvd': 'boulevard', 'boul': 'boulevard', 'ave': 'avenue',
+    'av': 'avenue', 'st': 'street', 'rd': 'road', 'dr': 'drive',
+    'ln': 'lane', 'hwy': 'highway', 'pkwy': 'parkway', 'pl': 'place',
+    'ct': 'court', 'n': 'north', 's': 'south', 'e': 'east', 'w': 'west',
+    'ne': 'northeast', 'nw': 'northwest', 'se': 'southeast',
+    'sw': 'southwest',
+}
+DIRECTIONS = {'north', 'south', 'east', 'west', 'northeast', 'northwest',
+              'southeast', 'southwest'}
+
+
+def _zone(feed):
+    key = feed.strip().upper()
+    if key not in FEED_TIME_ZONES:
+        raise ValueError(f'Unknown feed time zone for {feed!r}; configure FEED_TIME_ZONES')
+    return ZoneInfo(FEED_TIME_ZONES[key])
+
+
+def _parse_date(value):
+    """Parse ISO timestamp as UTC if naive; return aware UTC datetime or None."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _target_window(start_hour, end_hour, check_date, tz, now):
+    if not (isinstance(start_hour, int) and isinstance(end_hour, int)
+            and 0 <= start_hour <= 23 and 0 <= end_hour <= 24
+            and start_hour != end_hour):
+        raise ValueError('start_hour must be 0–23, end_hour 0–24, and they must differ')
+    if check_date is None:
+        day = now.astimezone(tz).date()
+    else:
+        day = date.fromisoformat(check_date)
+    begin = datetime.combine(day, time(start_hour), tzinfo=tz)
+    end_day = day + timedelta(days=int(end_hour <= start_hour))
+    finish = datetime.combine(end_day, time(end_hour % 24), tzinfo=tz)
+    return begin, finish
+
+
+def _record_time_status(p, window_start, window_end):
+    """Return ('overlap'|'outside'|'uncertain', explanation).
+
+    Compare full calendar timestamps in UTC. Missing end means open-ended;
+    missing or unparseable start means temporal status cannot be confirmed.
+    """
+    raw_start, raw_end = p.get('start_date'), p.get('end_date')
+    start = _parse_date(raw_start)
+    end = _parse_date(raw_end)
+    if start is None:
+        return 'uncertain', 'start date missing or invalid'
+    if raw_end and end is None:
+        return 'uncertain', 'end date invalid'
+    if end is not None and end < start:
+        return 'uncertain', 'end date precedes start date'
+    # Intervals are [start,end), so touching boundaries is not overlap.
+    overlap = (start < window_end.astimezone(timezone.utc)
+               and (end is None or end > window_start.astimezone(timezone.utc)))
+    return ('overlap' if overlap else 'outside',
+            'open-ended record' if end is None else 'dated record')
+
+
+def _road_tokens(s):
+    words = re.findall(r'[a-z0-9]+', str(s).lower())
+    words = [STREET_WORDS.get(x, x) for x in words]
+    # Ignore leading road direction (West Kennedy vs Kennedy), but not other
+    # distinctive words. Avoid arbitrary substring matching.
+    while words and words[0] in DIRECTIONS:
+        words.pop(0)
+    return words
+
+
+def _street_match(query, names):
+    q = _road_tokens(query)
+    if not q:
+        return False
+    for name in names or []:
+        # A few WZDx producers combine several road names in one string.
+        for subname in str(name).split(','):
+            tokens = _road_tokens(subname)
+            if tokens == q:
+                return True
+    return False
+
+
+def _road_names(f):
+    cd = (f.get('properties') or {}).get('core_details') or {}
+    names = cd.get('road_names') or []
+    if isinstance(names, str):
+        names = [names]
+    unique = []
+    for name in names:
+        for part in str(name).split(','):
+            clean = part.strip()
+            if clean and clean.lower() not in {x.lower() for x in unique}:
+                unique.append(clean)
+    return unique
 
 
 def _work_id(f):
-    # Personal Comments
-    # Extracts the records for a work zone or project
-    """Group records that belong to one work (permit/project)."""
-    return str(f.get('id', '')).split('/')[0].removesuffix('-R')
-
-
-def _utc_hour_to_local(dt_str: str, lon: float):
-    """
-    Parse a UTC ISO-8601 datetime string and return the local hour (0–23).
-    Uses longitude to approximate UTC offset: round(lon / 15).
-    Returns None if the string is missing or cannot be parsed.
-    """
-    # Personal Comments
-        # WZDx stores all datetimes in UTC ISO-8601
-        # This function helps convert it to local time. It uses longitude to estimate the 
-        # local timezone, which is an approximation but works for this tool's purpose.
-
-    if not dt_str:
+    value = str(f.get('id') or '').strip()
+    if not value:
         return None
-    try:
-        dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-        offset_h = round(lon / 15)   # e.g. lon=-82 → -5 (Florida EST)
-        local_dt = dt.astimezone(timezone(timedelta(hours=offset_h)))
-        return local_dt.hour
-    except Exception:
-        return None
+    return value.split('/')[0].removesuffix('-R')
 
 
-def _overlaps(sh, eh, start_hour, end_hour) -> bool:
-    """
-    True when zone's local [sh, eh) overlaps target [start_hour, end_hour).
-    None on either boundary means unknown → assume overlap (conservative).
-    """
-    # Personal Comments
-    # This function checks if the work zone's active hours overlap with the target time window.
-    # Some closures in the feed have no end_date at all. The spec allows this — it means 
-    # the work has no defined end. This tool treats those as active through any window you check. 
-    # This is a conservative design choice: rather flag a maybe-conflict than miss a real one. 
-
-    left_ok  = (sh is None) or (sh < end_hour)
-    right_ok = (eh is None) or (start_hour < eh)
-    return left_ok and right_ok
+def _record_key(f, index):
+    return _work_id(f) or f'no-id-record-{index}'
 
 
-# ── TOOL 1: "Are there already other closures around this area for the requested time"
+def _nearby(F, now, lat, lon, radius, statuses):
+    if radius <= 0:
+        raise ValueError('radius_mi must be positive')
+    hits = []
+    for i, f in enumerate(F['wz']):
+        p = f.get('properties') or {}
+        status = T._status(p, now)
+        if status not in statuses:
+            continue
+        d = T._dist(f, lat, lon)
+        if d is None or d > radius:
+            continue
+        hits.append((d, i, f, status))
+    return sorted(hits, key=lambda x: x[0])
+
+
+def _classify_lanes(records):
+    """Counts reported lane entries, not distinct physical corridor lanes."""
+    counts = {'general_total': 0, 'general_closed': 0,
+              'other_total': 0, 'other_closed': 0,
+              'unknown_total': 0, 'unknown_closed': 0,
+              'records_no_lane_data': 0}
+    for _, _, f, _ in records:
+        lanes = (f.get('properties') or {}).get('lanes') or []
+        if not lanes:
+            counts['records_no_lane_data'] += 1
+            continue
+        for lane in lanes:
+            typ = str(lane.get('type') or '').lower()
+            category = ('general' if typ in GENERAL_LANE_TYPES else
+                        'other' if typ in SUPPLEMENTAL_LANE_TYPES else 'unknown')
+            counts[f'{category}_total'] += 1
+            if str(lane.get('status') or '').lower() == 'closed':
+                counts[f'{category}_closed'] += 1
+    return counts
+
+
+def _lane_text(c):
+    def fmt(k):
+        total, closed = c[f'{k}_total'], c[f'{k}_closed']
+        return f'{closed}/{total} reported' if total else 'not reported'
+    return (f"general={fmt('general')}; supplemental={fmt('other')}; "
+            f"unclassified={fmt('unknown')}; "
+            f"records missing lanes={c['records_no_lane_data']}")
+
+
+def _record_json(d, i, f, status, **extra):
+    return {'id': f.get('id'), 'distance_mi': round(d, 3),
+            'status_at_query_time': status, 'road_names': _road_names(f),
+            'properties': f.get('properties') or {}, **extra}
+
+
+def _workzone_results(feed, street, near_lat, near_lon, radius_mi,
+                      start_hour, end_hour, check_date):
+    F = T._load(feed)
+    now = T._now()
+    tz = _zone(feed)
+    start, end = _target_window(start_hour, end_hour, check_date, tz, now)
+    nearby = _nearby(F, now, near_lat, near_lon, radius_mi, {'active', 'pending'})
+    matching = [item for item in nearby if _street_match(street, _road_names(item[2]))]
+    rows = []
+    for d, i, f, status in matching:
+        timing, reason = _record_time_status(f.get('properties') or {}, start, end)
+        rows.append((d, i, f, status, timing, reason))
+    return F, start, end, nearby, rows
+
 
 def work_zones_during_hours_plain(
     feed: str, street: str, near_lat: float, near_lon: float,
     radius_mi: float = 1.0, start_hour: int = 11, end_hour: int = 14,
+    check_date: str = None,
 ) -> str:
-    """Plain baseline: list work zones on the street by text search, without time filtering."""
-    # Personal Comments
-    # This function provides a simple text-based search for work zones on a given street
-    # It does not filter by time, just lists all records that match the street name.
+    """Plain baseline: text-only street-name matching (no temporal/geographic filter)."""
     F = T._load(feed)
-    hits = [
-        f for f in F['wz']
-        if any(street.lower() in n.lower()
-               for n in f['properties']['core_details'].get('road_names') or [])
-    ]
-    lines = [f"{len(hits)} record(s) on '{street}' in {F['name']} feed (no time filter):"]
+    hits = [f for f in F['wz'] if _street_match(street, _road_names(f))]
+    lines = [f"PLAIN BASELINE / TOOL 1 | feed={F['name']} | street={street}",
+             f'Matching records anywhere in feed: {len(hits)}',
+             'No status, location, or proposed time-window filtering is applied.']
     for f in hits:
-        p = f['properties']
-        lines.append(
-            f"  {f['id']}: {p.get('start_date','?')} → {p.get('end_date','no end date')}, "
-            f"impact={p.get('vehicle_impact','?')}"
-        )
+        p = f.get('properties') or {}
+        lines.append(f"  {f.get('id','?')} | roads={', '.join(_road_names(f)) or 'not provided'}"
+                     f" | start={p.get('start_date') or 'unknown'}"
+                     f" | end={p.get('end_date') or 'open-ended/unknown'}"
+                     f" | impact={p.get('vehicle_impact') or 'unknown'}")
     return '\n'.join(lines)
 
 
@@ -113,277 +241,167 @@ def work_zones_during_hours_plain(
 def work_zones_during_hours(
     feed: str, street: str, near_lat: float, near_lon: float,
     radius_mi: float = 1.0, start_hour: int = 11, end_hour: int = 14,
+    check_date: str = None,
 ) -> str:
+    """Screen active/pending records by street, radius, and an actual local date/time.
+
+    check_date: YYYY-MM-DD, default local today. Windows crossing midnight
+    are supported (e.g. 22 to 2). Active/pending is the feed's status *now*,
+    not a prediction of status on a future day. Read-only.
     """
-    Active and pending work zones on a street that overlap a local-time window.
-
-    Use this to flag road-work conflicts during meal-hour traffic peaks near
-    commercial districts. For lunch set start_hour=11, end_hour=14; for dinner
-    set start_hour=18, end_hour=21.
-
-    WZDx start_date and end_date are stored as UTC ISO-8601. This tool converts
-    them to local time using the longitude before comparing against your window,
-    so a closure active at 8 PM in Tampa is not missed because it is stored as
-    01:00 UTC the next day. A missing end_date means the closure has no defined
-    end; it is counted as active through any window (the work is set up
-    indefinitely). Zones with event_status 'active' are affecting traffic right
-    now; 'pending' means equipment is in place but traffic control has not yet
-    started — both are flagged, because a pending zone can flip to active during
-    your window. Cancelled and completed zones are excluded.
-
-    feed        : 'FL' or 'AZ'
-    street      : Street name ('Busch Blvd', 'Fletcher Ave')
-    near_lat    : Latitude of corridor point of interest
-    near_lon    : Longitude of corridor point of interest
-    radius_mi   : Search radius in miles (default 1.0)
-    start_hour  : Start of window, local 24-h, inclusive (default 11 = 11 AM)
-    end_hour    : End of window, local 24-h, exclusive (default 14 = 2 PM)
-
-    Read-only.
-    """
-
-    #Personal Comments
-    # This function checks for active or pending work zones on a specified street
-    # that overlap with a given local time window. It filters the work zones based on
-    # their status, distance from a point, and whether they match the street name.
-
-    F = T._load(feed)
-    now = T._now()
-
-    active_during, pending_during, outside_window = [], [], []
-
-    for f in F['wz']:
-        p = f['properties']; cd = p['core_details']
-        st = T._status(p, now)
-        if st not in ('active', 'pending'):
-            continue
-        d = T._dist(f, near_lat, near_lon)
-        if d is None or d > radius_mi:
-            continue
-        if not any(street.lower() in n.lower() for n in cd.get('road_names') or []):
-            continue
-
-        lon = (T._pts(f) or [[near_lon]])[0][0]
-        sh = _utc_hour_to_local(p.get('start_date'), lon)
-        # eh is None when end_date is missing (indefinite closure)
-        eh = _utc_hour_to_local(p.get('end_date'), lon) if p.get('end_date') else None
-
-        if _overlaps(sh, eh, start_hour, end_hour):
-            (active_during if st == 'active' else pending_during).append((d, f, sh, eh))
-        else:
-            outside_window.append((d, f))
-
-    win = f"{start_hour:02d}:00–{end_hour:02d}:00 local"
-    total = len(active_during) + len(pending_during)
-
+    F, start, end, nearby, rows = _workzone_results(
+        feed, street, near_lat, near_lon, radius_mi, start_hour, end_hour, check_date)
+    overlapping = [r for r in rows if r[4] == 'overlap']
+    uncertain = [r for r in rows if r[4] == 'uncertain']
+    outside = [r for r in rows if r[4] == 'outside']
     lines = [
-        f"Time-window check · {street} · {win} · "
-        f"{F['name']} feed · {radius_mi:g} mi of ({near_lat:.4f},{near_lon:.4f})",
-        f"Conflicts: {len(active_during)} active  |  {len(pending_during)} pending  |  "
-        f"{len(outside_window)} outside window",
+        'TOOL 1 | WORK-ZONE DATE/TIME CONFLICT SCREEN',
+        f"Feed: {F['name']} | Road searched: {street}",
+        f'Center: ({near_lat:.4f}, {near_lon:.4f}) | Radius: {radius_mi:g} mi',
+        f'Window: {start:%Y-%m-%d %H:%M %Z} to {end:%Y-%m-%d %H:%M %Z}',
+        'Scope: feed records active/pending NOW, matching road name and radius.',
+        '',
+        'FILTER RESULTS',
+        f'  Active/pending records within radius (any road): {len(nearby)}',
+        f'  Matching requested road: {len(rows)}',
+        f'  Confirmed time-window overlaps: {len(overlapping)}',
+        f'  Cannot determine temporal overlap: {len(uncertain)}',
+        f'  Outside requested date/time: {len(outside)}',
     ]
-
-    for d, f, sh, eh in sorted(active_during, key=lambda x: x[0]):
-        p = f['properties']; cd = p['core_details']
-        road = (cd.get('road_names') or ['?'])[0]
-        imp  = (p.get('vehicle_impact') or 'unknown').replace('-', ' ')
-        lanes = T._lanes_text(p.get('lanes'))
-        eh_str = f"hour {eh:02d}" if eh is not None else "no end date"
-        lines.append(
-            f"  [ACTIVE]  {road} · {d:.1f} mi · {imp}"
-            f"{', ' + lanes if lanes else ''} · local {sh:02d}h → {eh_str}"
-        )
-
-    for d, f, sh, eh in sorted(pending_during, key=lambda x: x[0]):
-        p = f['properties']; cd = p['core_details']
-        road = (cd.get('road_names') or ['?'])[0]
-        imp  = (p.get('vehicle_impact') or 'unknown').replace('-', ' ')
-        eh_str = f"hour {eh:02d}" if eh is not None else "no end date"
-        lines.append(
-            f"  [PENDING] {road} · {d:.1f} mi · {imp} · local {sh:02d}h → {eh_str}"
-        )
-
-    if total == 0:
-        lines.append(
-            f"  → No conflicts with {win}. "
-            f"Street appears clear for new permits during this window."
-        )
-    elif total >= 2:
-        lines.append(
-            f"\n  ⚠ {total} zone(s) conflict with {win}. "
-            f"Permit issuance not recommended without review."
-        )
+    if not rows:
+        nearby_roads = []
+        for _, _, f, _ in nearby:
+            for name in _road_names(f):
+                if name not in nearby_roads:
+                    nearby_roads.append(name)
+        lines += ['', 'MATCHING RECORDS', '  None.',
+                  f'  Nearby named roads: {", ".join(nearby_roads[:12]) or "none reported"}']
     else:
-        lines.append(f"\n  ⚡ 1 zone conflicts with {win}. Review before issuing permit.")
-
+        lines += ['', 'MATCHING RECORDS']
+        rank = {'overlap': 0, 'uncertain': 1, 'outside': 2}
+        for d, i, f, status, timing, reason in sorted(rows, key=lambda x: (rank[x[4]], x[0])):
+            p = f.get('properties') or {}
+            ts = _parse_date(p.get('start_date'))
+            te = _parse_date(p.get('end_date'))
+            tz = start.tzinfo
+            start_str = ts.astimezone(tz).strftime('%Y-%m-%d %H:%M %Z') if ts else 'unknown'
+            end_str = te.astimezone(tz).strftime('%Y-%m-%d %H:%M %Z') if te else ('open-ended' if not p.get('end_date') else 'invalid')
+            lines.append(f'  [{timing.upper()}] ID={f.get("id", "?")} | status now={status} | {d:.2f} mi')
+            lines.append(f'    Roads: {", ".join(_road_names(f)) or "not provided"}')
+            lines.append(f'    Recorded interval: {start_str} -> {end_str}')
+            lines.append(f'    Vehicle impact: {p.get("vehicle_impact") or "not reported"}; note: {reason}')
+    lines += ['', 'SCREENING INTERPRETATION']
+    if overlapping:
+        lines.append(f'  REVIEW: {len(overlapping)} matching record(s) overlap the requested date/time.')
+    elif uncertain:
+        lines.append('  INDETERMINATE: matching record dates are incomplete; review source data.')
+    else:
+        lines.append('  No confirmed overlapping records identified; this does not verify the street is clear.')
+    if uncertain and overlapping:
+        lines.append(f'  Also review {len(uncertain)} matching record(s) with uncertain timing.')
+    lines.append('  Verify coverage, lane restrictions, and field conditions before permit approval.')
     return '\n'.join(lines)
 
-
-# ── TOOL 2 "How severe would the impact be if this closure happened?"
 
 def lane_closure_traffic_impact_plain(
     feed: str, near_lat: float, near_lon: float, radius_mi: float = 0.5,
 ) -> str:
-    """Plain baseline: count all closed lanes without distinguishing general from shoulder/parking."""
-
-# Personal Comments
-# This function provides a simple count of closed lanes within a specified radius
-
-    F = T._load(feed); now = T._now()
-    hits = []
-    for f in F['wz']:
-        if T._status(f['properties'], now) != 'active':
-            continue
-        d = T._dist(f, near_lat, near_lon)
-        if d is not None and d <= radius_mi:
-            hits.append((d, f))
-    if not hits:
-        return f"No active work zones within {radius_mi} mi."
-    lines = [f"{len(hits)} active record(s) within {radius_mi} mi:"]
-    for d, f in hits:
-        p = f['properties']
+    """Plain baseline: raw lane counts by active record; no lane-type distinctions."""
+    F = T._load(feed)
+    hits = _nearby(F, T._now(), near_lat, near_lon, radius_mi, {'active'})
+    lines = [f"PLAIN BASELINE / TOOL 2 | feed={F['name']} | radius={radius_mi:g} mi",
+             f'Active records in radius: {len(hits)}']
+    for d, i, f, _ in hits:
+        p = f.get('properties') or {}
         lanes = p.get('lanes') or []
-        closed = sum(1 for l in lanes if l.get('status') == 'closed')
-        lines.append(
-            f"  {f['id']}: {closed}/{len(lanes) or '?'} lanes closed, "
-            f"impact={p.get('vehicle_impact','?')}"
-        )
+        lane_txt = (f"{sum(l.get('status') == 'closed' for l in lanes)}/{len(lanes)}"
+                    if lanes else 'not reported')
+        lines.append(f'  ID={f.get("id", "?")} | {d:.2f} mi | closed/total={lane_txt}'
+                     f' | impact={p.get("vehicle_impact") or "unknown"}')
     return '\n'.join(lines)
+
+
+def _impact_results(feed, near_lat, near_lon, radius_mi):
+    F = T._load(feed)
+    now = T._now()
+    hits = _nearby(F, now, near_lat, near_lon, radius_mi, {'active'})
+    projects = defaultdict(list)
+    for d, i, f, status in hits:
+        projects[_record_key(f, i)].append((d, i, f, status))
+    ordered = sorted(projects.items(), key=lambda kv: min(r[0] for r in kv[1]))
+    return F, hits, ordered
 
 
 @T._errors_as_text
 def lane_closure_traffic_impact(
     feed: str, near_lat: float, near_lon: float, radius_mi: float = 0.5,
 ) -> str:
+    """Report active nearby projects and *reported lane entries* by type.
+
+    This does not establish physical corridor-wide capacity loss or the exact
+    number of unique blocked lanes. Read-only.
     """
-    Corridor lane-closure burden, broken down by lane type, with multiple-closure flagging.
-
-    WZDx LaneType distinguishes 'general' lanes — the mainline travel lanes
-    that carry through traffic — from 'shoulder', 'parking', 'bike-lane',
-    'median' and other supplemental lane types. Closing a general lane reduces
-    throughput capacity; closing a shoulder typically does not. This tool reports
-    the two categories separately so a permit office can judge whether a new
-    closure would drop corridor throughput below an acceptable threshold, rather
-    than counting all closed lanes as equivalent.
-
-    When two or more active works appear in the same short corridor, their
-    capacity reductions combine — a 2-lane road with one general lane closed by
-    Work A and another general lane closed by Work B has effectively zero
-    throughput. The WZDx feed reports each zone independently with no cross-zone
-    aggregation; this tool surfaces that gap by grouping all active works within
-    the radius into one corridor summary and flagging when multiple are present.
-
-    feed      : 'FL' or 'AZ'
-    near_lat  : Latitude of corridor centre
-    near_lon  : Longitude of corridor centre
-    radius_mi : Corridor radius in miles (default 0.5)
-
-    Read-only.
-    """
-
-    # Personal Comments
-    # This function analyzes the lane closure impact within a specified corridor.
-    # It counts the number of closed general lanes and supplemental lanes, and flags if 
-    # multiple works are present in the corridor.
-
-    # If FDOT closes a shoulder lane, that’s annoying but traffic still flows. If they 
-    # close a general lane on a 2-lane road, capacity is cut in half.
-
-    F = T._load(feed); now = T._now()
-    hits = []
-    for f in F['wz']:
-        if T._status(f['properties'], now) != 'active':
-            continue
-        d = T._dist(f, near_lat, near_lon)
-        if d is not None and d <= radius_mi:
-            hits.append((d, f))
-
-    if not hits:
-        return (
-            f"No active work zones within {radius_mi:g} mi of "
-            f"({near_lat:.4f},{near_lon:.4f}) in {F['name']} feed. "
-            f"Corridor appears clear."
-        )
-
+    F, hits, projects = _impact_results(feed, near_lat, near_lon, radius_mi)
     org = T._orgs(F['info'])
-    works = {}
-    for d, f in hits:
-        works.setdefault(_work_id(f), []).append((d, f))
-
-    total_gen_closed = total_supp_closed = 0
-    work_lines = []
-
-    for wid, recs in sorted(works.items(), key=lambda kv: min(d for d, _ in kv[1])):
-        f0 = recs[0][1]; cd0 = f0['properties']['core_details']
-        road = (cd0.get('road_names') or ['unnamed road'])[0]
-        src  = org.get(cd0.get('data_source_id'), '?')
-        g_cl = g_tot = s_cl = s_tot = 0
-        for _, f in recs:
-            for lane in (f['properties'].get('lanes') or []):
-                lt     = (lane.get('type') or 'general').lower()
-                closed = lane.get('status') == 'closed'
-                if lt in GENERAL_LANE_TYPES:
-                    g_tot += 1
-                    if closed:
-                        g_cl += 1
-                else:
-                    s_tot += 1
-                    if closed:
-                        s_cl += 1
-        total_gen_closed  += g_cl
-        total_supp_closed += s_cl
-        work_lines.append(
-            f"  • {road} · {min(d for d, _ in recs):.1f} mi · {src}\n"
-            f"    General lanes closed: {g_cl}/{g_tot or '?'}  |  "
-            f"Shoulder/other closed: {s_cl}/{s_tot or '?'}"
-        )
-
-    n = len(works)
+    total = _classify_lanes(hits)
     lines = [
-        f"Corridor impact · {radius_mi:g} mi of ({near_lat:.4f},{near_lon:.4f}) · {F['name']} feed",
-        f"Works: {n}  |  General lanes closed: {total_gen_closed}  |  "
-        f"Shoulder/other closed: {total_supp_closed}",
-    ] + work_lines
-
-    if n >= 2:
-        lines.append(
-            f"\n  ⚠ MULTIPLE WORKS IN CORRIDOR: {n} simultaneous closures.\n"
-            f"  WZDx reports each zone independently — no cross-zone aggregation.\n"
-            f"  Combined: {total_gen_closed} general lane(s) removed from this corridor.\n"
-            f"  A new permit here adds to existing capacity reductions; "
-            f"off-peak scheduling strongly advised."
-        )
-    elif total_gen_closed > 0:
-        word = "lane" if total_gen_closed == 1 else "lanes"
-        lines.append(
-            f"\n  ⚡ {total_gen_closed} general {word} closed in corridor. "
-            f"Review before issuing a new permit."
-        )
+        'TOOL 2 | NEARBY ACTIVE WORKS & LANE RESTRICTIONS',
+        f"Feed: {F['name']} | Center: ({near_lat:.4f}, {near_lon:.4f}) | Radius: {radius_mi:g} mi",
+        'Scope: all roads within radius; work status must be active NOW.',
+        '', 'SUMMARY',
+        f'  Active WZDx records: {len(hits)}',
+        f'  Grouped work IDs (approx. projects): {len(projects)}',
+        f"  Reported closed general-lane entries: {total['general_closed']}",
+        f"  Reported closed supplemental-lane entries: {total['other_closed']}",
+        f"  Reported closed unclassified-lane entries: {total['unknown_closed']}",
+        f"  Records with no lane data: {total['records_no_lane_data']}",
+        '', 'WORK DETAILS',
+    ]
+    if not projects:
+        lines.append('  No active records were found inside the radius.')
+    for wid, recs in projects:
+        names = []
+        agencies = []
+        for _, _, f, _ in recs:
+            for name in _road_names(f):
+                if name not in names:
+                    names.append(name)
+            source = (f.get('properties') or {}).get('core_details') or {}
+            agency = org.get(source.get('data_source_id'), 'not reported')
+            if agency not in agencies:
+                agencies.append(agency)
+        c = _classify_lanes(recs)
+        dist = min(r[0] for r in recs)
+        lines.append(f'  Work ID: {wid} | nearest record {dist:.2f} mi | {len(recs)} record(s)')
+        lines.append(f'    Roads: {", ".join(names) or "not reported"}')
+        lines.append(f'    Source: {", ".join(agencies)}')
+        lines.append(f'    Lane data: {_lane_text(c)}')
+    lines += ['', 'SCREENING INTERPRETATION']
+    if len(projects) >= 2:
+        lines.append(f'  REVIEW: {len(projects)} active work IDs are located near the reference point.')
+        lines.append('  Their restrictions may affect different roads, directions, and segments.')
+    elif projects:
+        lines.append('  One active work ID was identified near the reference point.')
     else:
-        note = "some shoulder/other closures noted" if total_supp_closed else "corridor clear"
-        lines.append(f"\n  ✓ No general lanes closed in corridor ({note}).")
-
+        lines.append('  No active work records found; this does not establish that roads are clear.')
+    if total['records_no_lane_data']:
+        lines.append('  INCOMPLETE DATA: missing lane lists prevent a complete closure count.')
+    lines.append('  Lane totals count feed entries, NOT unique blocked lanes or capacity reduction.')
+    lines.append('  No delay, queue length, travel-time, or capacity estimate is calculated.')
     return '\n'.join(lines)
 
 
-# ── registry 
-# A registry of the tools in this file, for use by the WZDx-Tools framework. The
-# framework uses this to discover the tools and their metadata, and to call them
-# with the right arguments. The registry also marks which tools are read-only.
-
-TOOLS     = [work_zones_during_hours, lane_closure_traffic_impact]
+# Registry retained for WZDx-Tools framework compatibility.
+TOOLS = [work_zones_during_hours, lane_closure_traffic_impact]
 READ_ONLY = {'work_zones_during_hours', 'lane_closure_traffic_impact'}
-
 PLAIN_DESCRIPTIONS = {
     'work_zones_during_hours':
-        'Work zones on a street near a point within a time window. '
-        'feed: feed name. street: street name. near_lat, near_lon: location. '
-        'radius_mi: radius in miles. start_hour, end_hour: 24-h hour window. '
-        'Read-only.',
+        'Screen active/pending work zones by street, radius and local date/time. '
+        'feed, street, near_lat, near_lon, radius_mi, start_hour, end_hour, '
+        'optional check_date (YYYY-MM-DD). Read-only.',
     'lane_closure_traffic_impact':
-        'Lane closures in a corridor. feed: feed name. '
-        'near_lat, near_lon: corridor centre. radius_mi: radius in miles. '
-        'Read-only.',
+        'Report active nearby work IDs and lane-closure entries by type. '
+        'feed, near_lat, near_lon, radius_mi. Read-only.',
 }
 
 
@@ -391,54 +409,48 @@ PLAIN_DESCRIPTIONS = {
 def work_zones_during_hours_raw(
     feed: str, street: str, near_lat: float, near_lon: float,
     radius_mi: float = 1.0, start_hour: int = 11, end_hour: int = 14,
+    check_date: str = None,
 ) -> str:
-    F = T._load(feed); now = T._now()
-    records = []
-    for f in F['wz']:
-        p = f['properties']
-        if T._status(p, now) not in ('active', 'pending'):
-            continue
-        d = T._dist(f, near_lat, near_lon)
-        if d is None or d > radius_mi:
-            continue
-        if any(street.lower() in n.lower()
-               for n in p['core_details'].get('road_names') or []):
-            records.append({'id': f.get('id'), **p})
-    return json.dumps({'feed': F['name'], 'records': records}, default=str)
+    """JSON: same matching records and temporal classification as designed Tool 1."""
+    F, start, end, nearby, rows = _workzone_results(
+        feed, street, near_lat, near_lon, radius_mi, start_hour, end_hour, check_date)
+    records = [_record_json(d, i, f, st, time_classification=timing, time_note=reason)
+               for d, i, f, st, timing, reason in rows]
+    return json.dumps({'tool': 'work_zones_during_hours', 'feed': F['name'],
+                       'requested_street': street, 'window_start_local': start.isoformat(),
+                       'window_end_local': end.isoformat(),
+                       'nearby_active_pending_records_all_roads': len(nearby),
+                       'matching_records': records}, indent=2, default=str)
 
 
 @T._errors_as_text
 def lane_closure_traffic_impact_raw(
     feed: str, near_lat: float, near_lon: float, radius_mi: float = 0.5,
 ) -> str:
-    F = T._load(feed); now = T._now()
-    records = []
-    for f in F['wz']:
-        if T._status(f['properties'], now) != 'active':
-            continue
-        d = T._dist(f, near_lat, near_lon)
-        if d is not None and d <= radius_mi:
-            records.append({'id': f.get('id'), **f['properties']})
-    return json.dumps({'feed': F['name'], 'records': records}, default=str)
+    """JSON: same active records and lane tallies as designed Tool 2."""
+    F, hits, projects = _impact_results(feed, near_lat, near_lon, radius_mi)
+    return json.dumps({'tool': 'lane_closure_traffic_impact', 'feed': F['name'],
+                       'radius_mi': radius_mi, 'active_record_count': len(hits),
+                       'work_id_count': len(projects),
+                       'lane_entry_totals': _classify_lanes(hits),
+                       'records': [_record_json(d, i, f, st) for d, i, f, st in hits]},
+                      indent=2, default=str)
 
 
 RAW_RESULTS = {
-    'work_zones_during_hours':     work_zones_during_hours_raw,
+    'work_zones_during_hours': work_zones_during_hours_raw,
     'lane_closure_traffic_impact': lane_closure_traffic_impact_raw,
 }
 
 
 if __name__ == '__main__':
-    # Quick smoke-test: Busch Blvd near USF during lunch
+    print('=== TOOL 1: BUSCH BLVD ===')
     print(work_zones_during_hours('FL', 'Busch Blvd', 28.0587, -82.4139,
-                                   start_hour=11, end_hour=14))
-    print()
+                                  start_hour=11, end_hour=14))
+    print('\n=== TOOL 2: BUSCH BLVD AREA ===')
     print(lane_closure_traffic_impact('FL', 28.0587, -82.4139, radius_mi=1.0))
-    print()
-    # Personal Smoke test - this should return a work zine affecting the corridor 
-    # I live here and its been closed for construction for awhile (over a year)
-    print("--- Kennedy Blvd (Armenia to Howard), Tampa ---")
+    print('\n=== TOOL 1: KENNEDY BLVD ===')
     print(work_zones_during_hours('FL', 'Kennedy Blvd', 27.9472, -82.4677,
-                                   radius_mi=0.5, start_hour=11, end_hour=14))
-    print()
+                                  radius_mi=0.5, start_hour=11, end_hour=14))
+    print('\n=== TOOL 2: KENNEDY BLVD AREA ===')
     print(lane_closure_traffic_impact('FL', 27.9472, -82.4677, radius_mi=0.5))
