@@ -44,6 +44,7 @@ MY_INSTRUCTIONS = (
     'For permit screening questions — checking whether a planned road closure conflicts with existing work zones — '
     'use work_zones_during_hours. It requires: feed (use "FL" for Florida), street name, near_lat and near_lon '
     '(coordinates near the named street; if not given, ask the caller for them), radius_mi, and start_hour/end_hour '
+    'Under no circumstances should you manufacture a lat/lon or radius_mi; if the caller does not know them, ask for them.'
     'in local 24-h time (lunch: 11-14, dinner: 18-21). It filters to active and pending records only and converts '
     'UTC feed dates to local time. Do not use get_work_zones or check_location for permit screening. '
     'For corridor-wide lane impact — how many general travel lanes are closed nearby — use '
