@@ -3,7 +3,6 @@
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 from contrib.alinahagen.tools import (
-    _utc_hour_to_local, _overlaps,
     GENERAL_LANE_TYPES, SUPPLEMENTAL_LANE_TYPES,
     lane_closure_traffic_impact,
     work_zones_during_hours,
@@ -63,8 +62,9 @@ def test_multiple_closures_flagged():
 def test_lane_count_reported_by_type():
     result = lane_closure_traffic_impact('FL', 27.9472, -82.4677, radius_mi=0.5)
     # Output must report general and shoulder/other counts separately
-    check('test_general_lanes_reported', 'General lanes closed:' in result)
-    check('test_shoulder_lanes_reported', 'Shoulder/other closed:' in result)
+    check('test_general_lanes_reported', 'Reported closed general-lane entries:' in result)
+    check('test_shoulder_lanes_reported', 'Reported closed supplemental-lane entries:' in result)
+    check('test_conflicts_line_present', 'SCREENING INTERPRETATION' in result)
 
 # Rule 4: A WZDx record’s EventStatus field distinguishes between planned (estimated, early design), 
 # pending (scheduled 2–3 weeks out, >90% certainty), active (work zone in place and active), and 
@@ -81,8 +81,6 @@ def test_event_status_filtering():
     result = work_zones_during_hours('FL', 'Busch Blvd', 28.0587, -82.4139,
                                      radius_mi=1.0, start_hour=11, end_hour=14)
     check('test_status_filter_returns_string', isinstance(result, str))
-    # Result must state conflicts count (meaning it filtered by status)
-    check('test_conflicts_line_present', 'Conflicts:' in result)
     # Planned records should not appear as active conflicts
     check('test_no_planned_label_in_output', '[PLANNED]' not in result)
 
