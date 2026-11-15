@@ -38,13 +38,13 @@ ABLATION = os.environ.get('ABLATION', 'full')
 
 TOOLKIT_INSTRUCTIONS = (
     'Work zones from public WZDx feeds (USDOT format): Florida (FL, FDOT via One.network), Arizona (AZ) and others '
-    'from list_feeds. Times are local. Most work zones do not report lane impact and none has a verified position: '
+    'from list_feeds. Toolkit display times are local. Most work zones do not report lane impact and none has a verified position: '
     'say "unknown" and "reported", never "open" or "confirmed". No reported work zone does not mean none exists.')
 MY_INSTRUCTIONS = (
-    # ---- your part: what your tools add, and when to use them
-    'For a street name (Busch Blvd, N 30th St), use work_zones_on_street with a point near the place: it reads '
-    'street names the way people write them and counts works rather than records. For route numbers use '
-    'get_work_zones.')
+    'For crash diversion screening on a road near a point, use crash_area_work_zone_constraints. For a known '
+    'FDOT work-zone feature ID, use linked_work_zone_detours_for_direction to check its published detours. '
+    'These two tools display UTC. Keep unknown directions separate and name the limits of WZDx evidence. The operator verifies real '
+    'conditions and approves any diversion.')
 INSTRUCTIONS = TOOLKIT_INSTRUCTIONS + (' ' + MY_INSTRUCTIONS if ABLATION == 'full' else '')
 
 server = Server('wzdx-' + os.path.basename(HERE), instructions=INSTRUCTIONS)

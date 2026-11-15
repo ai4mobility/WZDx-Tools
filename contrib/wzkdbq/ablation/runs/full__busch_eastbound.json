@@ -1,0 +1,45 @@
+{
+ "harness": "ablation.py",
+ "model": "Qwen/Qwen3-1.7B",
+ "thinking": false,
+ "seed": 1,
+ "server": "contrib\\wzkdbq\\server.py",
+ "date": "2026-11-15T14:54:38-05:00",
+ "data": "WZDx snapshot snapshots\\2026-11-05",
+ "device": "cpu",
+ "setup": "full",
+ "descriptions_of_your_tools": {
+  "crash_area_work_zone_constraints": "Screen FDOT work-zone records near a crash point or candidate bypass. Enter a road name or route number, latitude and longitude, EB/WB/NB/SB, and a radius in miles. Results count reported work-zone records and give distance in miles, evidence time in UTC, and closed general travel-lane positions when supported. Records with unknown direction are listed separately. Unknown lane impact does not establish that lanes are open. For a linked detour use its work-zone ID with linked_work_zone_detours_for_direction. This point-radius screen cannot verify the crash, route alignment, or actual lane availability. The TMC operator verifies conditions through dispatch, a camera, or field staff before using the result. Read-only.",
+  "linked_work_zone_detours_for_direction": "Look up published FDOT work-zone detour records for an exact work-zone feature ID and EB/WB/NB/SB. Returns linked detour IDs, their names, and reported dates in UTC. It separates unknown directions and excludes known opposite directions using the direction field. An unverified end time is a reported planning window, not evidence of reopening. For a road or point without an ID, first use crash_area_work_zone_constraints or the toolkit lookup. A feed relationship does not approve a crash diversion. The TMC operator checks current conditions and the incident response plan before use. Read-only."
+ },
+ "tools_served": [
+  "list_feeds",
+  "get_work_zones",
+  "check_location",
+  "get_detours",
+  "feed_quality",
+  "crash_area_work_zone_constraints",
+  "linked_work_zone_detours_for_direction"
+ ],
+ "instructions": "Work zones from public WZDx feeds (USDOT format): Florida (FL, FDOT via One.network), Arizona (AZ) and others from list_feeds. Toolkit display times are local. Most work zones do not report lane impact and none has a verified position: say \"unknown\" and \"reported\", never \"open\" or \"confirmed\". No reported work zone does not mean none exists. For crash diversion screening on a road near a point, use crash_area_work_zone_constraints. For a known FDOT work-zone feature ID, use linked_work_zone_detours_for_direction to check its published detours. These two tools display UTC. Keep unknown directions separate and name the limits of WZDx evidence. The operator verifies real conditions and approves any diversion.",
+ "calls": [
+  {
+   "name": "crash_area_work_zone_constraints",
+   "arguments": {
+    "road": "Busch Blvd",
+    "near_lat": 28.0587,
+    "near_lon": -82.4139,
+    "direction": "eastbound",
+    "radius_mi": 5.0
+   },
+   "check": "ok",
+   "result": "FDOT work-zone screen: Busch Blvd, eastbound, within 5 mi of (28.0587, -82.4139). Saved FDOT snapshot, published update 2026-11-05 14:21 UTC.\nReported eastbound records: 1.\n- 4577091647/292055206 · FDOT reports eastbound · 2.08 mi · some lanes closed; right lane of 3 closed · reported end 2026-11-05 21:00 UTC (feed reports end verified)\nSeparate records with unknown direction: 1.\n- 4577091647 · direction unknown; this record is not assigned to eastbound · 2.12 mi · lane impact not reported; specific closed travel-lane position not established · reported end 2026-11-05 21:00 UTC (end unverified)\nNearby active records without a road name: 5. The name search cannot assign them to this road.\nThis is a work-zone proximity screen. Verify crash conditions and route suitability independently."
+  }
+ ],
+ "answer": "FDOT work-zone screen: Busch Blvd, eastbound, within 5 mi of (28.0587, -82.4139). Saved FDOT snapshot, published update 2026-11-05 14:21 UTC.\n\nReported eastbound records: 1.\n- 4577091647/292055206 · FDOT reports eastbound · 2.08 mi · some lanes closed; right lane of 3 closed · reported end 2026-11-05 21:00 UTC (feed reports end verified)\n\nSeparate records with unknown direction: 1.\n- 4577091647 · direction unknown; this record is not assigned to eastbound · 2.12 mi · lane impact not reported; specific closed travel-lane position not established · reported end 2026-11-05 21:00 UTC (end unverified)\n\nNearby active records without a road name: 5. The name search cannot assign them to this road.\n\nThis is a work-zone proximity screen. Verify crash conditions and route suitability independently.",
+ "note": null,
+ "turns": 2,
+ "model_s": 110.7,
+ "question_id": "busch_eastbound",
+ "question": "Dispatch reported a crash near USF. In the FDOT snapshot, what eastbound work-zone lane closure is reported on Busch Blvd within 5 mi of 28.0587, -82.4139? Give the affected travel lane and flag any record whose direction is missing."
+}

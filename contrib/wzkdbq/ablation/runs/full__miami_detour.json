@@ -1,0 +1,42 @@
+{
+ "harness": "ablation.py",
+ "model": "Qwen/Qwen3-1.7B",
+ "thinking": false,
+ "seed": 1,
+ "server": "contrib\\wzkdbq\\server.py",
+ "date": "2026-11-15T14:58:43-05:00",
+ "data": "WZDx snapshot snapshots\\2026-11-05",
+ "device": "cpu",
+ "setup": "full",
+ "descriptions_of_your_tools": {
+  "crash_area_work_zone_constraints": "Screen FDOT work-zone records near a crash point or candidate bypass. Enter a road name or route number, latitude and longitude, EB/WB/NB/SB, and a radius in miles. Results count reported work-zone records and give distance in miles, evidence time in UTC, and closed general travel-lane positions when supported. Records with unknown direction are listed separately. Unknown lane impact does not establish that lanes are open. For a linked detour use its work-zone ID with linked_work_zone_detours_for_direction. This point-radius screen cannot verify the crash, route alignment, or actual lane availability. The TMC operator verifies conditions through dispatch, a camera, or field staff before using the result. Read-only.",
+  "linked_work_zone_detours_for_direction": "Look up published FDOT work-zone detour records for an exact work-zone feature ID and EB/WB/NB/SB. Returns linked detour IDs, their names, and reported dates in UTC. It separates unknown directions and excludes known opposite directions using the direction field. An unverified end time is a reported planning window, not evidence of reopening. For a road or point without an ID, first use crash_area_work_zone_constraints or the toolkit lookup. A feed relationship does not approve a crash diversion. The TMC operator checks current conditions and the incident response plan before use. Read-only."
+ },
+ "tools_served": [
+  "list_feeds",
+  "get_work_zones",
+  "check_location",
+  "get_detours",
+  "feed_quality",
+  "crash_area_work_zone_constraints",
+  "linked_work_zone_detours_for_direction"
+ ],
+ "instructions": "Work zones from public WZDx feeds (USDOT format): Florida (FL, FDOT via One.network), Arizona (AZ) and others from list_feeds. Toolkit display times are local. Most work zones do not report lane impact and none has a verified position: say \"unknown\" and \"reported\", never \"open\" or \"confirmed\". No reported work zone does not mean none exists. For crash diversion screening on a road near a point, use crash_area_work_zone_constraints. For a known FDOT work-zone feature ID, use linked_work_zone_detours_for_direction to check its published detours. These two tools display UTC. Keep unknown directions separate and name the limits of WZDx evidence. The operator verifies real conditions and approves any diversion.",
+ "calls": [
+  {
+   "name": "linked_work_zone_detours_for_direction",
+   "arguments": {
+    "work_zone_id": "4571671574",
+    "direction": "northbound"
+   },
+   "check": "ok",
+   "result": "FDOT work-zone 4571671574. Saved FDOT snapshot, published update 2026-11-05 14:21 UTC.\nReported northbound detour records: 1.\n- 4571671574/291384760 · FDOT reports northbound · 441 nb to I95 nb using Miami Gardens Detour · reported start 2026-11-03 03:00 UTC · reported end 2026-11-30 10:00 UTC (end unverified)\nThese are published work-zone relationships. Verify conditions and approval for crash diversion."
+  }
+ ],
+ "answer": "FDOT work-zone 4571671574 has the following published detours:\n\n1. **Northbound Detour**:\n   - **Detour ID**: 4571671574/291384760\n   - **Detour Name**: FDOT reports northbound\n   - **Direction**: Northbound\n   - **Detour Route**: 441 nb to I95 nb using Miami Gardens Detour\n   - **Reported Start Time**: 2026-11-03 03:00 UTC\n   - **Reported End Time**: 2026-11-30 10:00 UTC\n   - **End Time Verified**: Unverified\n\nThe feed does not verify the end time of the detour. The TMC operator is responsible for verifying the current conditions and incident response plan before using the result.",
+ "note": null,
+ "turns": 2,
+ "model_s": 70.4,
+ "question_id": "miami_detour",
+ "question": "For FDOT work-zone feature 4571671574, what published detours does the toolkit list, then which is northbound when checked by direction? Include its reported end time and whether the feed has verified the end."
+}

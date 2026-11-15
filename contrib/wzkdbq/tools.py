@@ -1,182 +1,286 @@
-"""Template: one work-zone tool written the way a transportation engineer would write it, and the plain version it
-is measured against. Copy this folder to contrib/<your-github-username>/ and replace the example with your own
-tools (at least two). Keep the shape:
+"""Read-only FDOT work-zone screening for crash diversion decisions."""
 
-  * each tool is a function with type hints, '-> str', and a docstring: the description the model reads
-  * TOOLS lists the tools the model may call; READ_ONLY names the ones that only read (all of them, for WZDx)
-  * a *_plain function is the baseline: the same question answered without your knowledge. It is not in TOOLS, so
-    the model never sees it; test_plain_vs_... uses it to show what your knowledge changes
-  * the toolkit (wzdx_tools.py, imported as T) does the plumbing: loading feeds, local time, distances, lanes
-  * PLAIN_DESCRIPTIONS and RAW_RESULTS (at the end) are for the ablation: the same tools, with the transportation
-    knowledge taken out of what the model reads
+import gzip
+import json
+import os
+import re
+import sys
+import time
+from datetime import timezone
+from functools import lru_cache
+from pathlib import Path
+from typing import Annotated, Literal
 
-The example: "What work is on this street?" The toolkit's get_work_zones(road=...) matches street names as plain
-text. For 'Busch Blvd' it finds only the record whose name field happens to say 'E Busch Blvd', and misses the
-record that says 'East Busch Boulevard': the one with the lane closure. work_zones_on_street adds what an engineer
-knows about street names and about how a work is reported. KNOWLEDGE.md lists each rule with its source and its
-test.
-"""
-import os, sys, re, json
-from typing import Optional
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+from pydantic import Field
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import wzdx_tools as T
 
-# Rule 1. USPS Publication 28: standard street suffix abbreviations (Appendix C1) and directionals.
-SUFFIX = {'AVENUE': 'AVE', 'AV': 'AVE', 'BOULEVARD': 'BLVD', 'STREET': 'ST', 'ROAD': 'RD', 'DRIVE': 'DR',
-          'LANE': 'LN', 'COURT': 'CT', 'CIRCLE': 'CIR', 'PLACE': 'PL', 'PARKWAY': 'PKWY', 'HIGHWAY': 'HWY',
-          'TERRACE': 'TER', 'TRAIL': 'TRL', 'EXPRESSWAY': 'EXPY', 'CAUSEWAY': 'CSWY', 'PLAZA': 'PLZ'}
-ABBREVIATED = set(SUFFIX.values()) | {'WAY', 'LOOP', 'RUN', 'PATH', 'PASS', 'ROW', 'WALK'}
-DIRECTION = {'NORTH': 'N', 'SOUTH': 'S', 'EAST': 'E', 'WEST': 'W', 'NORTHEAST': 'NE', 'NORTHWEST': 'NW',
-             'SOUTHEAST': 'SE', 'SOUTHWEST': 'SW'}
-# Rule 2. A road-name field can end in ', City, State' and can hold several streets separated by commas.
-CITY_STATE = re.compile(r'(^|,)\s*[A-Za-z .\'-]+,\s*(Florida|FL|Arizona|AZ)\s*$', re.I)
-ROUTE = re.compile(r'^\s*(I|US|SR|CR|FL|State Road|Interstate|Loop|L)[\s-]*\d', re.I)
-
-
-def _street_parts(name):
-    """'East Busch Boulevard, Tampa, Florida' -> [('E', 'BUSCH', 'BLVD')]; 'North Orleans Avenue,West Hamilton
-    Avenue' -> two streets; 'Tampa, Florida' -> [] (a city is not a street)."""
-    out = []
-    for s in re.split(r'[,;]', CITY_STATE.sub('', name or '')):
-        w = re.sub(r'^\s*ON\s+', '', s.upper().replace('.', '')).split()      # 'on Pompano Dr'
-        if not w:
-            continue
-        d = DIRECTION.get(w[0], w[0]) if w[0] in DIRECTION or w[0] in DIRECTION.values() else ''
-        w = w[1:] if d and len(w) > 1 else w
-        if not d and len(w) > 1 and (w[0] in DIRECTION or w[0] in DIRECTION.values()):
-            d = DIRECTION.get(w[0], w[0])
-        suf = SUFFIX.get(w[-1], w[-1]) if len(w) > 1 and (w[-1] in SUFFIX or w[-1] in ABBREVIATED) else ''
-        core = ' '.join(w[:-1] if suf else w)
-        out.append((d, core, suf))
-    return out
-
-
-def _matches(query, name):
-    """Same street? The core must agree; a direction or a suffix left out of the query matches any."""
-    q = _street_parts(query)
-    if not q:
-        return False
-    qd, qc, qs = q[0]
-    return any(c == qc and (not qd or d == qd) and (not qs or not s or s == qs) for d, c, s in _street_parts(name))
-
-
-def _work_id(f):
-    """One work (a permit or a project) is reported as several records: 'work/segment/...', and '-R' for the
-    reverse direction. Records that share the first part of the id are one work."""
-    return str(f.get('id', '')).split('/')[0].removesuffix('-R')
-
-
-def _pretty(d, c, s):
-    word = lambda x: x.lower() if x[:1].isdigit() else x.capitalize()          # '30TH' -> '30th', 'BUSCH' -> 'Busch'
-    return ' '.join(x for x in (d, ' '.join(map(word, c.split())), s.capitalize()) if x)
-
-
-def _find(feed, street, near_lat, near_lon, radius_mi):
-    """The search, shared by the tool and its raw version: active records on the street within the radius, grouped
-    by work, and the count of active records nearby that have no street name."""
-    F = T._load(feed); now = T._now()
-    works, unnamed = {}, 0
-    for f in F['wz']:
-        p = f['properties']; cd = p.get('core_details', {})
-        if T._status(p, now) != 'active':
-            continue
-        d = T._dist(f, near_lat, near_lon)
-        if d is None or d > radius_mi:
-            continue
-        names = cd.get('road_names') or []
-        if not names:
-            unnamed += 1
-            continue
-        if any(_matches(street, n) for n in names):
-            works.setdefault(_work_id(f), []).append((d, f))
-    return F, works, unnamed
-
-
-@T._errors_as_text
-def work_zones_on_street(feed: str, street: str, near_lat: float, near_lon: float, radius_mi: float = 5.0) -> str:
-    """Active work on one street near a place, counted as works rather than records. feed: 'FL', 'AZ' or a name
-    from list_feeds. street: a street name as people say it ('Busch Blvd', 'N 30th St', 'Fowler Avenue'); suffixes
-    and directions may be spelled out or abbreviated, and a name without N/S/E/W matches every direction prefix.
-    near_lat, near_lon and radius_mi (default 5 mi) give the place, because street names repeat across a state
-    (Florida's feed has a 109th Avenue in Tampa and another 200 mi away). One work (a permit or a project) is often reported as several records,
-    one per segment and direction: the result lists each work with its records' directions, lane impact, closed
-    lanes, end time in local time and reporting organization. 'Lane impact not reported' means the feed does not
-    say; it does not mean the lanes are open. The result also says how many active records near the place have no
-    street name, which a search by name cannot find. For route numbers (I-75, SR 580, US 41) use get_work_zones.
-    Read-only."""
-    if ROUTE.match(street or ''):
-        return (f"'{street}' is a route number, not a street name: call get_work_zones with road='{street}' and the "
-                f"same point and radius.")
-    if not _street_parts(street):
-        return f"Error: '{street}' is not a street name. Give one such as 'Busch Blvd' or 'N 30th St'."
-    F, works, unnamed = _find(feed, street, near_lat, near_lon, radius_mi)
-    org = T._orgs(F['info'])
-    n_rec = sum(len(v) for v in works.values())
-    unk = sum(1 for v in works.values() for _, f in v if (f['properties'].get('vehicle_impact') or 'unknown') == 'unknown')
-    head = (f"{street} within {radius_mi:g} mi of ({near_lat:.4f}, {near_lon:.4f}), {F['name']} feed updated "
-            f"{T._local(F['info'].get('update_date'), F['name'], near_lon)}: {len(works)} active work(s) on the street, "
-            f"from {n_rec} record(s). Lane impact not reported for {unk} of {n_rec} records.")
-    lines = [head]
-    for wid, recs in sorted(works.items(), key=lambda kv: min(d for d, _ in kv[1])):
-        f0 = recs[0][1]; cd0 = f0['properties']['core_details']
-        names = [_pretty(*s) for n in cd0.get('road_names', []) for s in _street_parts(n) if _matches(street, _pretty(*s))]
-        src = org.get(cd0.get('data_source_id'), cd0.get('data_source_id'))
-        lines.append(f"- work {wid} · {names[0] if names else street} · {min(d for d, _ in recs):.1f} mi away · "
-                     f"reported by {src} · {len(recs)} record(s)")
-        for d, f in sorted(recs, key=lambda x: str(x[1].get('id'))):
-            p = f['properties']; cd = p['core_details']
-            dirn = cd.get('direction') if cd.get('direction') not in (None, '', 'unknown', 'undefined') else 'direction not reported'
-            imp = p.get('vehicle_impact') or 'unknown'
-            imp = 'lane impact not reported' if imp == 'unknown' else imp.replace('-', ' ')
-            lanes = T._lanes_text(p.get('lanes'))
-            lon = T._pts(f)[0][0] if T._pts(f) else near_lon
-            lines.append(f"    {dirn}: {imp}{', ' + lanes if lanes else ''} · until "
-                         f"{T._local(p.get('end_date'), F['name'], lon)}")
-        desc = re.sub(r'\s+', ' ', cd0.get('description') or '').strip()
-        if desc:
-            lines.append('    ' + (desc if len(desc) <= 160 else desc[:159] + '…'))
-    lines.append(f"Not findable by name: {unnamed} active record(s) within {radius_mi:g} mi have no street name. "
-                 f"To see them, call get_work_zones with near_lat, near_lon and radius_mi.")
-    return '\n'.join(lines)
-
-
-def work_zones_on_street_plain(feed: str, street: str) -> str:
-    """The baseline: every work-zone record whose road name contains the text, as the feed gives it."""
-    F = T._load(feed)
-    hits = [f for f in F['wz'] if any(street.lower() in n.lower() for n in f['properties']['core_details'].get('road_names') or [])]
-    lines = [f'{len(hits)} work zones found.']
-    for f in hits:
-        p = f['properties']
-        lines.append(f"{f['id']}: {p['core_details'].get('road_names')}, vehicle_impact={p.get('vehicle_impact')}, "
-                     f"{p.get('start_date')} to {p.get('end_date')}")
-    return '\n'.join(lines)
-
-
-TOOLS = [work_zones_on_street]
-READ_ONLY = {'work_zones_on_street'}
-
-# For the ablation's plain setup (contrib/ablation.py): your tools with the transportation knowledge taken out of
-# what the model reads. The search stays the same; only the words change.
-#   PLAIN_DESCRIPTIONS: each tool's description as any programmer would write it from the function signature alone
-#     (what it returns, its inputs, read-only), without what only a transportation engineer would add.
-#   RAW_RESULTS: for each tool, a function with the same inputs that returns the same data raw (here, the records as
-#     the feed gives them, in JSON), without the wording you designed (DESIGN.md, section 4).
-PLAIN_DESCRIPTIONS = {
-    'work_zones_on_street': 'Active work zones on a street. feed: feed name. street: street name. near_lat, near_lon: '
-                            'a point. radius_mi: search radius in miles. Read-only.',
+Direction = Literal['NB', 'SB', 'EB', 'WB', 'northbound', 'southbound', 'eastbound', 'westbound']
+Latitude = Annotated[float, Field(ge=-90, le=90)]
+Longitude = Annotated[float, Field(ge=-180, le=180)]
+Radius = Annotated[float, Field(gt=0, le=25)]
+DIRECTIONS = {'NB': 'northbound', 'SB': 'southbound', 'EB': 'eastbound', 'WB': 'westbound'}
+UNREPORTED = {None, '', 'unknown', 'undefined', 'not-reported'}
+STREET_WORDS = {
+    'BOULEVARD': 'BLVD', 'AVENUE': 'AVE', 'STREET': 'ST', 'ROAD': 'RD',
+    'DRIVE': 'DR', 'COURT': 'CT', 'LANE': 'LN', 'PARKWAY': 'PKWY',
+    'EAST': 'E', 'WEST': 'W', 'NORTH': 'N', 'SOUTH': 'S',
 }
 
 
+def _direction(value):
+    value = value.strip()
+    normalized = DIRECTIONS.get(value.upper(), value.lower())
+    if normalized not in DIRECTIONS.values():
+        raise ValueError('Give a direction such as EB, WB, NB or SB.')
+    return normalized
+
+
+def _road_parts(value):
+    words = re.findall(r'[A-Z0-9]+', value.upper())
+    return tuple(STREET_WORDS.get(word, word) for word in words)
+
+
+def _same_road(query, names):
+    route = T._norm_road(query)
+    if re.match(r'^(I|US|SR|CR|L)-\d', route):
+        return T._road_match(query, *names)
+    wanted = _road_parts(query)
+    for name in names:
+        for segment in re.split(r'[,;]', name):
+            candidate = _road_parts(segment)
+            if candidate == wanted or (
+                candidate and candidate[0] in {'N', 'S', 'E', 'W'} and candidate[1:] == wanted
+            ):
+                return True
+    return False
+
+
+def _nearby(road, near_lat, near_lon, radius_mi):
+    if not _road_parts(road):
+        raise ValueError('Give a road name or route number, such as Busch Blvd or I-95.')
+    if not (-90 <= near_lat <= 90 and -180 <= near_lon <= 180 and 0 < radius_mi <= 25):
+        raise ValueError('Give valid latitude and longitude and a radius greater than 0 and at most 25 miles.')
+    feed = T._load('FL')
+    now = T._now()
+    records = []
+    unnamed = 0
+    for feature in feed['wz']:
+        props = feature['properties']
+        if T._status(props, now) != 'active':
+            continue
+        points = T._pts(feature)
+        if not points or not points[0]:
+            continue
+        distance = T._dist(feature, near_lat, near_lon)
+        if distance is None or distance > radius_mi:
+            continue
+        names = props['core_details'].get('road_names') or []
+        if not any(_road_parts(name) for name in names):
+            unnamed += 1
+        elif _same_road(road, names):
+            records.append((distance, str(feature['id']), props))
+    return feed['info'].get('update_date'), sorted(records, key=lambda item: item[:2]), unnamed
+
+
+@lru_cache(maxsize=1)
+def _detour_index(snapshot, refresh_bucket):
+    if snapshot:
+        path = Path(snapshot) / 'fldot.json'
+        compressed = path.with_suffix('.json.gz')
+        if compressed.exists():
+            with gzip.open(compressed, 'rt', encoding='utf-8') as stream:
+                feed = json.load(stream)
+        else:
+            with path.open(encoding='utf-8') as stream:
+                feed = json.load(stream)
+    else:
+        feed = T._get(T._url(T._registry()['fldot']))
+    work_zones = {}
+    detours = {}
+    for feature in feed['features']:
+        props = feature['properties']
+        core = props['core_details']
+        feature_id = str(feature['id'])
+        if core['event_type'] == 'work-zone':
+            work_zones[feature_id] = _related(core, 'related-detour', 'children')
+        elif core['event_type'] == 'detour':
+            detours[feature_id] = props
+    return feed['feed_info'].get('update_date'), work_zones, detours
+
+
+def _related(core, event_type, fallback):
+    standard = {str(event['id']) for event in core.get('related_road_events') or ()
+                if event.get('type') == event_type and event.get('id') is not None}
+    return standard or set(map(str, (core.get('relationship') or {}).get(fallback) or ()))
+
+
+def _linked(work_zone_id):
+    work_zone_id = work_zone_id.strip()
+    snapshot = os.environ.get('WZDX_SNAPSHOT')
+    update, work_zones, detours = _detour_index(snapshot, 0 if snapshot else int(time.time() // T.CACHE_S))
+    if work_zone_id not in work_zones:
+        raise ValueError('Work-zone ID not found. Use the exact FDOT feature ID from the work-zone lookup.')
+    records = [
+        (feature_id, props) for feature_id, props in detours.items()
+        if feature_id in work_zones[work_zone_id]
+        or work_zone_id in _related(props['core_details'], 'related-work-zone', 'parents')
+    ]
+    return update, sorted(records)
+
+
 @T._errors_as_text
-def work_zones_on_street_raw(feed: str, street: str, near_lat: float, near_lon: float, radius_mi: float = 5.0) -> str:
-    """The same search as work_zones_on_street, returned raw: the records as the feed gives them."""
-    F, works, unnamed = _find(feed, street, near_lat, near_lon, radius_mi) if _street_parts(street) else (T._load(feed), {}, 0)
-    records = [{'id': f.get('id'), **f['properties']} for recs in works.values() for _, f in recs]
-    return json.dumps({'feed': F['name'], 'update_date': F['info'].get('update_date'), 'records': records,
-                       'records_without_road_name': unnamed}, default=str)
+def crash_area_work_zone_constraints_plain(
+    road: str, near_lat: Latitude, near_lon: Longitude, direction: Direction, radius_mi: Radius = 5.0,
+) -> str:
+    """Return matching FDOT records and their raw fields."""
+    requested = _direction(direction)
+    update, records, unnamed = _nearby(road, near_lat, near_lon, radius_mi)
+    return json.dumps({
+        'feed_updated': update,
+        'records_without_road_name': unnamed,
+        'records': [
+            {'id': feature_id, 'distance_mi': round(distance, 2), **props}
+            for distance, feature_id, props in records
+            if props['core_details'].get('direction') in UNREPORTED | {requested}
+        ],
+    })
 
 
-RAW_RESULTS = {'work_zones_on_street': work_zones_on_street_raw}
+@T._errors_as_text
+def linked_work_zone_detours_for_direction_plain(work_zone_id: str, direction: Direction) -> str:
+    """Return linked detour records and their raw fields."""
+    requested = _direction(direction)
+    update, records = _linked(work_zone_id)
+    return json.dumps({'feed_updated': update, 'records': [
+        {'id': feature_id, **props} for feature_id, props in records
+        if props['core_details'].get('direction') in UNREPORTED | {requested}
+    ]})
 
-if __name__ == '__main__':
-    print(work_zones_on_street(*(sys.argv[1:3] or ['FL', 'Busch Blvd']), 28.0587, -82.4139))
+
+def _utc(value):
+    parsed = T._ts(value)
+    return parsed.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC') if parsed else 'not reported'
+
+
+def _end(props):
+    value = props.get('end_date')
+    if not T._ts(value):
+        return 'end time not reported'
+    status = 'feed reports end verified' if props.get('is_end_date_verified') is True else 'end unverified'
+    return f'reported end {_utc(value)} ({status})'
+
+
+def _feed_label(update):
+    source = 'Saved FDOT snapshot' if os.environ.get('WZDX_SNAPSHOT') else 'FDOT feed'
+    return f'{source}, published update {_utc(update)}.'
+
+
+def _lane_summary(props):
+    impact = props.get('vehicle_impact')
+    summary = 'lane impact not reported' if impact in UNREPORTED else impact.replace('-', ' ')
+    lanes = props.get('lanes') or []
+    orders = [lane.get('order') for lane in lanes]
+    complete = (
+        lanes and all(isinstance(order, int) for order in orders)
+        and sorted(orders) == list(range(1, len(lanes) + 1))
+        and all(lane.get('type') not in UNREPORTED and lane.get('status') not in UNREPORTED for lane in lanes)
+    )
+    if complete:
+        travel = [lane for lane in lanes if lane['type'] == 'general']
+        closed = [lane for lane in lanes if 'shoulder' in lane['type'] and lane['status'] == 'closed']
+        labels = [T._lanes_text(travel)] if travel else []
+        labels.extend(f"shoulder at feed order {lane['order']} closed" for lane in closed)
+        detail = ', '.join(filter(None, labels))
+        if detail:
+            return f'{summary}; {detail}'
+    return f'{summary}; specific closed travel-lane position not established'
+
+
+@T._errors_as_text
+def crash_area_work_zone_constraints(
+    road: str, near_lat: Latitude, near_lon: Longitude, direction: Direction, radius_mi: Radius = 5.0,
+) -> str:
+    """Screen FDOT work-zone records near a crash point or candidate bypass. Enter a road name or route number,
+    latitude and longitude, EB/WB/NB/SB, and a radius in miles. Results count reported work-zone records and give
+    distance in miles, evidence time in UTC, and closed general travel-lane positions when supported. Records
+    with unknown direction are listed separately. Unknown lane impact does not establish that lanes are open.
+    For a linked detour use its work-zone ID with linked_work_zone_detours_for_direction. This point-radius
+    screen cannot verify the crash, route alignment, or actual lane availability. The TMC operator verifies
+    conditions through dispatch, a camera, or field staff before using the result. Read-only."""
+    requested = _direction(direction)
+    update, records, unnamed = _nearby(road, near_lat, near_lon, radius_mi)
+    matches = []
+    unknown = []
+    for distance, feature_id, props in records:
+        reported = props['core_details'].get('direction')
+        if reported == requested:
+            group = matches
+            evidence = f'FDOT reports {requested}'
+        elif reported in UNREPORTED:
+            group = unknown
+            evidence = f'direction unknown; this record is not assigned to {requested}'
+        else:
+            continue
+        group.append(f'- {feature_id} · {evidence} · {distance:.2f} mi · {_lane_summary(props)} · {_end(props)}')
+    uncertain = [f'Separate records with unknown direction: {len(unknown)}.', *unknown] if unknown else []
+    return '\n'.join([
+        f'FDOT work-zone screen: {road}, {requested}, within {radius_mi:g} mi of ({near_lat:g}, {near_lon:g}). '
+        f'{_feed_label(update)}',
+        f'Reported {requested} records: {len(matches)}.', *matches,
+        *uncertain,
+        f'Nearby active records without a road name: {unnamed}. The name search cannot assign them to this road.',
+        'This is a work-zone proximity screen. Verify crash conditions and route suitability independently.',
+    ])
+
+
+@T._errors_as_text
+def linked_work_zone_detours_for_direction(work_zone_id: str, direction: Direction) -> str:
+    """Look up published FDOT work-zone detour records for an exact work-zone feature ID and EB/WB/NB/SB.
+    Returns linked detour IDs, their names, and reported dates in UTC. It separates unknown directions and
+    excludes known opposite directions using the direction field. An unverified end time is a reported
+    planning window, not evidence of reopening. For a road or point without an ID, first use
+    crash_area_work_zone_constraints or the toolkit lookup. A feed relationship does not approve a crash
+    diversion. The TMC operator checks current conditions and the incident response plan before use. Read-only."""
+    requested = _direction(direction)
+    update, records = _linked(work_zone_id)
+    matches = []
+    unknown = []
+    for feature_id, props in records:
+        core = props['core_details']
+        reported = core.get('direction')
+        if reported == requested:
+            group = matches
+            evidence = f'FDOT reports {requested}'
+        elif reported in UNREPORTED:
+            group = unknown
+            evidence = f'direction unknown; this record is not assigned to {requested}'
+        else:
+            continue
+        name = core.get('name') or 'name not reported'
+        group.append(
+            f'- {feature_id} · {evidence} · {name} · reported start {_utc(props.get("start_date"))} · {_end(props)}'
+        )
+    verdict = (
+        f'Reported {requested} detour records: {len(matches)}.'
+        if matches else f'No linked detour for this work-zone ID and direction ({requested}).'
+    )
+    uncertain = [f'Separate detours with unknown direction: {len(unknown)}.', *unknown] if unknown else []
+    return '\n'.join([
+        f'FDOT work-zone {work_zone_id.strip()}. {_feed_label(update)}',
+        verdict, *matches, *uncertain,
+        'These are published work-zone relationships. Verify conditions and approval for crash diversion.',
+    ])
+
+
+TOOLS = [crash_area_work_zone_constraints, linked_work_zone_detours_for_direction]
+READ_ONLY = {tool.__name__ for tool in TOOLS}
+PLAIN_DESCRIPTIONS = {
+    'crash_area_work_zone_constraints': 'Return FDOT records for a road, coordinates, direction, and radius in miles. Read-only.',
+    'linked_work_zone_detours_for_direction': 'Return FDOT detour records for a work-zone ID and direction. Read-only.',
+}
+RAW_RESULTS = {
+    'crash_area_work_zone_constraints': crash_area_work_zone_constraints_plain,
+    'linked_work_zone_detours_for_direction': linked_work_zone_detours_for_direction_plain,
+}
