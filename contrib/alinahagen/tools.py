@@ -294,7 +294,14 @@ def work_zones_during_hours(
 
     Read-only.
     """
-
+    # Reject coordinates that are not plausibly within Florida
+    if not (24.0 <= near_lat <= 31.0 and -88.0 <= near_lon <= -80.0):
+        return (
+            "Location could not be verified. "
+            "The coordinates provided do not fall within Florida. "
+            "Stop and ask the caller to supply the correct latitude and longitude."
+        )
+    
     F, start, end, nearby, rows = _workzone_results(
         feed, street, near_lat, near_lon, radius_mi, start_hour, end_hour, check_date)
     overlapping = [r for r in rows if r[4] == 'overlap']
