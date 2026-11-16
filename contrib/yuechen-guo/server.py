@@ -41,10 +41,11 @@ TOOLKIT_INSTRUCTIONS = (
     'from list_feeds. Times are local. Most work zones do not report lane impact and none has a verified position: '
     'say "unknown" and "reported", never "open" or "confirmed". No reported work zone does not mean none exists.')
 MY_INSTRUCTIONS = (
-    # ---- your part: what your tools add, and when to use them
-    'For a street name (Busch Blvd, N 30th St), use work_zones_on_street with a point near the place: it reads '
-    'street names the way people write them and counts works rather than records. For route numbers use '
-    'get_work_zones.')
+    "If the user gives a work zone ID and asks about walking directions, call get_pedestrian_detour_info first. "
+    "Pass the ID exactly as written, including any -R suffix. This lookup only needs the feed and ID. "
+    "Use find_sidewalk_closures to discover an ID when the user supplies a street and coordinates. Never guess coordinates. "
+    "Distinguish an estimated project end from a confirmed reopening. Mention gaps in the report. "
+    "These tools cannot calculate a walking time or establish that an alternate path is safe.")
 INSTRUCTIONS = TOOLKIT_INSTRUCTIONS + (' ' + MY_INSTRUCTIONS if ABLATION == 'full' else '')
 
 server = Server('wzdx-' + os.path.basename(HERE), instructions=INSTRUCTIONS)

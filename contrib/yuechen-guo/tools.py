@@ -1,27 +1,14 @@
-"""Template: one work-zone tool written the way a transportation engineer would write it, and the plain version it
-is measured against. Copy this folder to contrib/<your-github-username>/ and replace the example with your own
-tools (at least two). Keep the shape:
+"""Read reported sidewalk closures and pedestrian notices from WZDx feeds."""
+import json
+import math
+import re
+import sys
+from pathlib import Path
 
-  * each tool is a function with type hints, '-> str', and a docstring: the description the model reads
-  * TOOLS lists the tools the model may call; READ_ONLY names the ones that only read (all of them, for WZDx)
-  * a *_plain function is the baseline: the same question answered without your knowledge. It is not in TOOLS, so
-    the model never sees it; test_plain_vs_... uses it to show what your knowledge changes
-  * the toolkit (wzdx_tools.py, imported as T) does the plumbing: loading feeds, local time, distances, lanes
-  * PLAIN_DESCRIPTIONS and RAW_RESULTS (at the end) are for the ablation: the same tools, with the transportation
-    knowledge taken out of what the model reads
-
-The example: "What work is on this street?" The toolkit's get_work_zones(road=...) matches street names as plain
-text. For 'Busch Blvd' it finds only the record whose name field happens to say 'E Busch Blvd', and misses the
-record that says 'East Busch Boulevard': the one with the lane closure. work_zones_on_street adds what an engineer
-knows about street names and about how a work is reported. KNOWLEDGE.md lists each rule with its source and its
-test.
-"""
-import os, sys, re, json
-from typing import Optional
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import wzdx_tools as T
 
-# Rule 1. USPS Publication 28: standard street suffix abbreviations (Appendix C1) and directionals.
+# Street-name matching from the course template.
 SUFFIX = {'AVENUE': 'AVE', 'AV': 'AVE', 'BOULEVARD': 'BLVD', 'STREET': 'ST', 'ROAD': 'RD', 'DRIVE': 'DR',
           'LANE': 'LN', 'COURT': 'CT', 'CIRCLE': 'CIR', 'PLACE': 'PL', 'PARKWAY': 'PKWY', 'HIGHWAY': 'HWY',
           'TERRACE': 'TER', 'TRAIL': 'TRL', 'EXPRESSWAY': 'EXPY', 'CAUSEWAY': 'CSWY', 'PLAZA': 'PLZ'}
@@ -30,7 +17,6 @@ DIRECTION = {'NORTH': 'N', 'SOUTH': 'S', 'EAST': 'E', 'WEST': 'W', 'NORTHEAST': 
              'SOUTHEAST': 'SE', 'SOUTHWEST': 'SW'}
 # Rule 2. A road-name field can end in ', City, State' and can hold several streets separated by commas.
 CITY_STATE = re.compile(r'(^|,)\s*[A-Za-z .\'-]+,\s*(Florida|FL|Arizona|AZ)\s*$', re.I)
-ROUTE = re.compile(r'^\s*(I|US|SR|CR|FL|State Road|Interstate|Loop|L)[\s-]*\d', re.I)
 
 
 def _street_parts(name):
@@ -60,123 +46,151 @@ def _matches(query, name):
     return any(c == qc and (not qd or d == qd) and (not qs or not s or s == qs) for d, c, s in _street_parts(name))
 
 
-def _work_id(f):
-    """One work (a permit or a project) is reported as several records: 'work/segment/...', and '-R' for the
-    reverse direction. Records that share the first part of the id are one work."""
-    return str(f.get('id', '')).split('/')[0].removesuffix('-R')
+# Match explicit closure language. General sidewalk construction is insufficient.
+PATH_WORD = r"(?:sidewalk|footway|walkway)s?"
+CLOSED = re.compile(
+    rf"\b{PATH_WORD}\s+(?:(?:is|are)\s+)?(?:temporarily\s+)?(?:closed|closures?)\b"
+    rf"|\b(?:closure of|closing|closed)\s+(?:the\s+)?{PATH_WORD}\b", re.I)
+NEGATED = re.compile(r"\b(?:no|without|avoid(?:ing)?|prevent(?:ing)?|possible|potential|proposed|planned)\s+(?:a\s+|any\s+|the\s+)?$", re.I)
+PEDESTRIAN = re.compile(r"\b(?:pedestrians?|sidewalks?|footways?|walkways?|on foot|crosswalks?)\b", re.I)
+GUIDANCE = re.compile(r"\b(?:use|follow|cross at|take|via|use the opposite side|do not enter)\b", re.I)
+HAZARD = re.compile(r"\b(?:uneven|unprotected|fall hazard|trip(?:ping)? hazard|unmarked crossing|exposed|watch for|beware of|hazardous|slippery)\b", re.I)
 
 
-def _pretty(d, c, s):
-    word = lambda x: x.lower() if x[:1].isdigit() else x.capitalize()          # '30TH' -> '30th', 'BUSCH' -> 'Busch'
-    return ' '.join(x for x in (d, ' '.join(map(word, c.split())), s.capitalize()) if x)
+def _closure(text):
+    return any(not NEGATED.search(text[:m.start()]) for m in CLOSED.finditer(text))
 
 
-def _find(feed, street, near_lat, near_lon, radius_mi):
-    """The search, shared by the tool and its raw version: active records on the street within the radius, grouped
-    by work, and the count of active records nearby that have no street name."""
-    F = T._load(feed); now = T._now()
-    works, unnamed = {}, 0
-    for f in F['wz']:
-        p = f['properties']; cd = p.get('core_details', {})
-        if T._status(p, now) != 'active':
-            continue
-        d = T._dist(f, near_lat, near_lon)
-        if d is None or d > radius_mi:
-            continue
-        names = cd.get('road_names') or []
-        if not names:
-            unnamed += 1
-            continue
-        if any(_matches(street, n) for n in names):
-            works.setdefault(_work_id(f), []).append((d, f))
-    return F, works, unnamed
-
-
-@T._errors_as_text
-def work_zones_on_street(feed: str, street: str, near_lat: float, near_lon: float, radius_mi: float = 5.0) -> str:
-    """Active work on one street near a place, counted as works rather than records. feed: 'FL', 'AZ' or a name
-    from list_feeds. street: a street name as people say it ('Busch Blvd', 'N 30th St', 'Fowler Avenue'); suffixes
-    and directions may be spelled out or abbreviated, and a name without N/S/E/W matches every direction prefix.
-    near_lat, near_lon and radius_mi (default 5 mi) give the place, because street names repeat across a state
-    (Florida's feed has a 109th Avenue in Tampa and another 200 mi away). One work (a permit or a project) is often reported as several records,
-    one per segment and direction: the result lists each work with its records' directions, lane impact, closed
-    lanes, end time in local time and reporting organization. 'Lane impact not reported' means the feed does not
-    say; it does not mean the lanes are open. The result also says how many active records near the place have no
-    street name, which a search by name cannot find. For route numbers (I-75, SR 580, US 41) use get_work_zones.
-    Read-only."""
-    if ROUTE.match(street or ''):
-        return (f"'{street}' is a route number, not a street name: call get_work_zones with road='{street}' and the "
-                f"same point and radius.")
+def _search(feed, street, near_lat, near_lon, radius_mi):
     if not _street_parts(street):
-        return f"Error: '{street}' is not a street name. Give one such as 'Busch Blvd' or 'N 30th St'."
-    F, works, unnamed = _find(feed, street, near_lat, near_lon, radius_mi)
-    org = T._orgs(F['info'])
-    n_rec = sum(len(v) for v in works.values())
-    unk = sum(1 for v in works.values() for _, f in v if (f['properties'].get('vehicle_impact') or 'unknown') == 'unknown')
-    head = (f"{street} within {radius_mi:g} mi of ({near_lat:.4f}, {near_lon:.4f}), {F['name']} feed updated "
-            f"{T._local(F['info'].get('update_date'), F['name'], near_lon)}: {len(works)} active work(s) on the street, "
-            f"from {n_rec} record(s). Lane impact not reported for {unk} of {n_rec} records.")
-    lines = [head]
-    for wid, recs in sorted(works.items(), key=lambda kv: min(d for d, _ in kv[1])):
-        f0 = recs[0][1]; cd0 = f0['properties']['core_details']
-        names = [_pretty(*s) for n in cd0.get('road_names', []) for s in _street_parts(n) if _matches(street, _pretty(*s))]
-        src = org.get(cd0.get('data_source_id'), cd0.get('data_source_id'))
-        lines.append(f"- work {wid} · {names[0] if names else street} · {min(d for d, _ in recs):.1f} mi away · "
-                     f"reported by {src} · {len(recs)} record(s)")
-        for d, f in sorted(recs, key=lambda x: str(x[1].get('id'))):
-            p = f['properties']; cd = p['core_details']
-            dirn = cd.get('direction') if cd.get('direction') not in (None, '', 'unknown', 'undefined') else 'direction not reported'
-            imp = p.get('vehicle_impact') or 'unknown'
-            imp = 'lane impact not reported' if imp == 'unknown' else imp.replace('-', ' ')
-            lanes = T._lanes_text(p.get('lanes'))
-            lon = T._pts(f)[0][0] if T._pts(f) else near_lon
-            lines.append(f"    {dirn}: {imp}{', ' + lanes if lanes else ''} · until "
-                         f"{T._local(p.get('end_date'), F['name'], lon)}")
-        desc = re.sub(r'\s+', ' ', cd0.get('description') or '').strip()
-        if desc:
-            lines.append('    ' + (desc if len(desc) <= 160 else desc[:159] + '…'))
-    lines.append(f"Not findable by name: {unnamed} active record(s) within {radius_mi:g} mi have no street name. "
-                 f"To see them, call get_work_zones with near_lat, near_lon and radius_mi.")
-    return '\n'.join(lines)
-
-
-def work_zones_on_street_plain(feed: str, street: str) -> str:
-    """The baseline: every work-zone record whose road name contains the text, as the feed gives it."""
-    F = T._load(feed)
-    hits = [f for f in F['wz'] if any(street.lower() in n.lower() for n in f['properties']['core_details'].get('road_names') or [])]
-    lines = [f'{len(hits)} work zones found.']
-    for f in hits:
-        p = f['properties']
-        lines.append(f"{f['id']}: {p['core_details'].get('road_names')}, vehicle_impact={p.get('vehicle_impact')}, "
-                     f"{p.get('start_date')} to {p.get('end_date')}")
-    return '\n'.join(lines)
-
-
-TOOLS = [work_zones_on_street]
-READ_ONLY = {'work_zones_on_street'}
-
-# For the ablation's plain setup (contrib/ablation.py): your tools with the transportation knowledge taken out of
-# what the model reads. The search stays the same; only the words change.
-#   PLAIN_DESCRIPTIONS: each tool's description as any programmer would write it from the function signature alone
-#     (what it returns, its inputs, read-only), without what only a transportation engineer would add.
-#   RAW_RESULTS: for each tool, a function with the same inputs that returns the same data raw (here, the records as
-#     the feed gives them, in JSON), without the wording you designed (DESIGN.md, section 4).
-PLAIN_DESCRIPTIONS = {
-    'work_zones_on_street': 'Active work zones on a street. feed: feed name. street: street name. near_lat, near_lon: '
-                            'a point. radius_mi: search radius in miles. Read-only.',
-}
+        raise ValueError("Give a street name.")
+    if not (-90 <= near_lat <= 90 and -180 <= near_lon <= 180):
+        raise ValueError("Give latitude and longitude in decimal degrees.")
+    if not math.isfinite(radius_mi) or radius_mi <= 0:
+        raise ValueError("Give a positive search radius in miles.")
+    data = T._load(feed)
+    records = []
+    now = T._now()
+    for feature in data["wz"]:
+        props = feature["properties"]
+        details = props.get("core_details", {})
+        if T._status(props, now) != "active" or not _closure(details.get("description") or ""):
+            continue
+        if not any(_matches(street, name) for name in details.get("road_names") or []):
+            continue
+        if not (feature.get("geometry") or {}).get("coordinates"):
+            continue
+        distance = T._dist(feature, near_lat, near_lon)
+        if distance is not None and distance <= radius_mi:
+            records.append((distance, feature))
+    records.sort(key=lambda item: (item[0], str(item[1]["id"])))
+    return data, records
 
 
 @T._errors_as_text
-def work_zones_on_street_raw(feed: str, street: str, near_lat: float, near_lon: float, radius_mi: float = 5.0) -> str:
-    """The same search as work_zones_on_street, returned raw: the records as the feed gives them."""
-    F, works, unnamed = _find(feed, street, near_lat, near_lon, radius_mi) if _street_parts(street) else (T._load(feed), {}, 0)
-    records = [{'id': f.get('id'), **f['properties']} for recs in works.values() for _, f in recs]
-    return json.dumps({'feed': F['name'], 'update_date': F['info'].get('update_date'), 'records': records,
-                       'records_without_road_name': unnamed}, default=str)
+def find_sidewalk_closures_plain(feed: str, street: str, near_lat: float, near_lon: float,
+                                radius_mi: float = 5.0) -> str:
+    """Read the fields from matching records without interpreting them."""
+    data, records = _search(feed, street, near_lat, near_lon, radius_mi)
+    return json.dumps({"feed": data["name"], "updated": data["info"].get("update_date"),
+                       "records": [{"id": f["id"], **f["properties"]} for _, f in records]})
 
 
-RAW_RESULTS = {'work_zones_on_street': work_zones_on_street_raw}
+@T._errors_as_text
+def find_sidewalk_closures(feed: str, street: str, near_lat: float, near_lon: float,
+                          radius_mi: float = 5.0) -> str:
+    """Find active work-zone records that explicitly describe a closed sidewalk or footway on a named
+    street near a point. Give the feed (for example FL), street, latitude, longitude and radius in miles.
+    A footway closure can affect walkers even when vehicle impact is unknown. Use the exact record ID
+    with get_pedestrian_detour_info for reported walking directions. The reported end may be an estimate. Read-only."""
+    data, records = _search(feed, street, near_lat, near_lon, radius_mi)
+    updated = T._local(data["info"].get("update_date"), data["name"], near_lon)
+    lines = [f"{street} within {radius_mi:g} mi of ({near_lat}, {near_lon}). "
+             f"{data['name']} feed updated {updated}. Matching active closure records: {len(records)}."]
+    for distance, feature in records:
+        props = feature["properties"]
+        details = props["core_details"]
+        reported = T._ts(props.get("end_date"))
+        end = "not reported"
+        if reported is not None:
+            zone, _ = T._tz(data["name"], T._pts(feature)[0][0])
+            end = reported.astimezone(zone).strftime("%Y-%m-%d %H:%M %Z")
+        if props.get("end_date") and props.get("end_date_accuracy") == "estimated":
+            end += " (estimated)"
+        elif props.get("end_date") and props.get("is_end_date_verified") is False:
+            end += " (unverified)"
+        lines.append(f"ID {feature['id']} | {details.get('direction') or 'direction not reported'} | "
+                     f"{distance:.1f} mi | Reported end: {end} | {details['description']}")
+    if records:
+        lines.append("A reported end time does not confirm that the sidewalk has reopened.")
+        lines.append("Northbound and southbound describe the closure records. Walking directions have not been checked. For a detour question, call get_pedestrian_detour_info for each relevant ID before answering. Do not infer a walking route from a closure direction.")
+    else:
+        lines.append("No matching closure was identified in the reports. Sidewalk access is unconfirmed.")
+    return "\n".join(lines)
 
-if __name__ == '__main__':
-    print(work_zones_on_street(*(sys.argv[1:3] or ['FL', 'Busch Blvd']), 28.0587, -82.4139))
+
+def _lookup(feed, work_zone_id):
+    data = T._load(feed)
+    key = work_zone_id.strip()
+    for feature in data["wz"]:
+        if str(feature["id"]) == key:
+            return feature["properties"], data["detours"].get(key, [])
+    raise ValueError(f"No work zone with ID {key!r} found in {data['name']}.")
+
+
+@T._errors_as_text
+def get_pedestrian_detour_info_raw(feed: str, work_zone_id: str) -> str:
+    props, linked = _lookup(feed, work_zone_id)
+    return json.dumps({"id": work_zone_id, "work_zone": props, "linked_detours": linked})
+
+
+@T._errors_as_text
+def get_pedestrian_detour_info(feed: str, work_zone_id: str) -> str:
+    """Check one exact work-zone ID for pedestrian notices in its report and linked detours. Supply the
+    same feed and ID returned by find_sidewalk_closures. Quote the reported wording and preserve restrictions.
+    A linked vehicle detour alone gives no walking directions. Missing hazard information leaves conditions
+    unknown. The tool cannot estimate walking time or confirm a safe alternate path. Read-only."""
+    props, linked = _lookup(feed, work_zone_id)
+    lines = [f"Work zone {work_zone_id} | Linked detour records: {len(linked)}"]
+    directions = []
+    hazards = []
+    other = []
+    for index, item in enumerate([props, *linked]):
+        details = item.get("core_details", {})
+        source = f"Linked detour {index}" if index else "Work zone"
+        label = details.get("name") or ""
+        description = (details.get("description") or "").strip()
+        # Preserve the whole notice so conditions and negations stay with any instructions.
+        notice = " | ".join(dict.fromkeys(s for s in [label, description] if s))
+        if not notice:
+            continue
+        if not PEDESTRIAN.search(notice):
+            continue
+        quote = f'{source}: "{notice}"'
+        if GUIDANCE.search(notice):
+            directions.append(quote)
+        if HAZARD.search(notice):
+            hazards.append(quote)
+        if quote not in directions and quote not in hazards:
+            other.append(quote)
+    lines.extend(other)
+    lines.append("Reported text to check for walking directions:" if directions else
+                 "No explicit walking directions identified in the checked text.")
+    lines.extend(directions)
+    lines.append("Reported text mentioning possible hazards:" if hazards else
+                 "No additional pedestrian hazard identified in the checked text.")
+    lines.extend(hazards)
+    lines.append("Conditions on an alternate walking route are unconfirmed.")
+    return "\n".join(lines)
+
+
+TOOLS = [find_sidewalk_closures, get_pedestrian_detour_info]
+READ_ONLY = {fn.__name__ for fn in TOOLS}
+PLAIN_DESCRIPTIONS = {
+    "find_sidewalk_closures": "Look up matching records by feed, street, coordinates and radius in miles.",
+    "get_pedestrian_detour_info": "Look up one record and its linked entries by feed and ID.",
+}
+RAW_RESULTS = {
+    "find_sidewalk_closures": find_sidewalk_closures_plain,
+    "get_pedestrian_detour_info": get_pedestrian_detour_info_raw,
+}

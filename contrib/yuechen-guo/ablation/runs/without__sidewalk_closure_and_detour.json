@@ -1,0 +1,39 @@
+{
+ "harness": "ablation.py",
+ "model": "Qwen/Qwen3-1.7B",
+ "thinking": false,
+ "seed": 1,
+ "server": "contrib/yuechen-guo/server.py",
+ "date": "2026-11-15T22:10:55-04:00",
+ "data": "WZDx snapshot snapshots/2026-11-05",
+ "device": "mps",
+ "setup": "without",
+ "descriptions_of_your_tools": {},
+ "tools_served": [
+  "list_feeds",
+  "get_work_zones",
+  "check_location",
+  "get_detours",
+  "feed_quality"
+ ],
+ "instructions": "Work zones from public WZDx feeds (USDOT format): Florida (FL, FDOT via One.network), Arizona (AZ) and others from list_feeds. Times are local. Most work zones do not report lane impact and none has a verified position: say \"unknown\" and \"reported\", never \"open\" or \"confirmed\". No reported work zone does not mean none exists.",
+ "calls": [
+  {
+   "name": "check_location",
+   "arguments": {
+    "feed": "FL",
+    "lat": 28.0587,
+    "lon": -82.4139,
+    "radius_mi": 0.5
+   },
+   "check": "ok",
+   "result": "No active work zone is reported within 0.5 mi of (28.05870, -82.41390) in the fldot feed. That is not proof there is none: if the camera sees cones, barrels or workers, trust the camera."
+  }
+ ],
+ "answer": "The check_location function indicates that there are no active work zones reported within 0.5 miles of your location (28.05870, -82.41390) in the Florida feed. This means that, based on the data from the Florida feed, there is no reported sidewalk closure on North 30th Street.\n\nHowever, it is important to note that the feed may not capture all work zones, and the reported data might not always be accurate. If you are concerned about a sidewalk closure, you might want to check with local authorities or use additional sources for confirmation. \n\nIf you need further details about the sidewalk closure, you might need to use the `get_work_zones` function with specific parameters to search for any work zones near North 30th Street.",
+ "note": null,
+ "turns": 2,
+ "model_s": 39.9,
+ "question_id": "sidewalk_closure_and_detour",
+ "question": "I walk to class near USF at (28.0587, -82.4139). Is there a reported sidewalk closure on North 30th Street? When is it expected to end, and does the report tell me which way to walk around it?"
+}

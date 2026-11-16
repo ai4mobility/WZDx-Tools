@@ -1,0 +1,42 @@
+{
+ "harness": "ablation.py",
+ "model": "Qwen/Qwen3-1.7B",
+ "thinking": false,
+ "seed": 1,
+ "server": "contrib/yuechen-guo/server.py",
+ "date": "2026-11-15T22:14:12-04:00",
+ "data": "WZDx snapshot snapshots/2026-11-05",
+ "device": "mps",
+ "setup": "without",
+ "descriptions_of_your_tools": {},
+ "tools_served": [
+  "list_feeds",
+  "get_work_zones",
+  "check_location",
+  "get_detours",
+  "feed_quality"
+ ],
+ "instructions": "Work zones from public WZDx feeds (USDOT format): Florida (FL, FDOT via One.network), Arizona (AZ) and others from list_feeds. Times are local. Most work zones do not report lane impact and none has a verified position: say \"unknown\" and \"reported\", never \"open\" or \"confirmed\". No reported work zone does not mean none exists.",
+ "calls": [
+  {
+   "name": "get_work_zones",
+   "arguments": {
+    "feed": "FL",
+    "road": "North 30th Street",
+    "near_lat": null,
+    "near_lon": null,
+    "radius_mi": 5.0,
+    "status": "active",
+    "max_results": 10
+   },
+   "check": "ok",
+   "result": "4 active work zone(s) match in the fldot feed (WZDx 4.2, updated Thu Nov 5 09:21 EST); showing 4. Lane impact unknown for 4 of 4.\n- North 30th Street · direction not reported · lane impact unknown (not reported)\n  ROW-25-0001919, Installing new sewer main\n  Tue Sep 8 07:00 EDT to Tue Dec 15 16:00 EST · reported by City of Tampa, Florida · position not verified, dates not verified · id 4233451340\n- North 30th Street · northbound · lane impact unknown (not reported)\n  Footway closure\n  Tue Sep 8 07:00 EDT to Tue Dec 15 16:00 EST · reported by City of Tampa, Florida · position not verified, dates not verified · id 4233451340/245269615\n- North 30th Street · southbound · lane impact unknown (not reported)\n  Footway closure\n  Tue Sep 8 07:00 EDT to Tue Dec 15 16:00 EST · reported by City of Tampa, Florida · position not verified, dates not verified · id 4233451340/245269615-R\n- North 30th Street · southbound · lane impact unknown (not reported)\n  CWS-27-0000027 repairing wastewater asset\n  Tue Oct 27 09:00 EDT to Fri Nov 6 17:00 EST · reported by City of Tampa, Florida · position not verified, dates not verified · id 4519480375"
+  }
+ ],
+ "answer": "The work zone ID provided is 4233451340/245269615-R, which is for a work zone on North 30th Street in Florida. The report does not specify which way you should walk around the closed sidewalk, as the direction is not reported. \n\nThe work zone is active and has a duration of 2 weeks (from Tue Sep 8 07:00 EDT to Tue Dec 15 16:00 EST). The work zone is reported by the City of Tampa, Florida, and the position and dates are not verified. \n\nSince the work zone is active and the direction is not reported, you should walk around the closed sidewalk in the direction you are going. The work zone is expected to last for approximately 2 weeks, so your walk will take about 2 weeks.",
+ "note": null,
+ "turns": 2,
+ "model_s": 74.1,
+ "question_id": "southbound_extra_walking_time",
+ "question": "I walk to class on North 30th Street. For work zone 4233451340/245269615-R in Florida, does the report say which way I should walk around the closed sidewalk? How much longer will my walk take?"
+}
