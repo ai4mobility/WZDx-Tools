@@ -64,7 +64,7 @@ transcripts: where did the model read it right, where did it read it wrong, and 
 In Q1, my work_zones_during_hours tool returned:
 
 
-	TOOL 1 | WORK-ZONE DATE/TIME CONFLICT SCREEN
+"TOOL 1 | WORK-ZONE DATE/TIME CONFLICT SCREEN
     Feed: fldot | Road searched: Kennedy Blvd
     Center: (30.2813, -86.1215) | Radius: 1 mi
     Window: 2023-10-05 11:00 EDT to 2023-10-05 14:00 EDT
@@ -80,7 +80,7 @@ In Q1, my work_zones_during_hours tool returned:
   Nearby named roads: none reported
   SCREENING INTERPRETATION
   Based on current information, permit can proceed as planned.
-  Verify coverage, lane restrictions, and field conditions before permit approval.
+  Verify coverage, lane restrictions, and field conditions before permit approval."
 	
 
 Scope and time: The tool evaluated a one-mile radius around the supplied coordinates for October 5, 2023, from 11 AM to 2 PM EDT. However, these were incorrect coordinates and an incorrect date, so the results did not represent the requested Tampa location.
@@ -94,11 +94,10 @@ Improvement: Based on this analysis, I added sveral more geographic failsafes to
 
 My best result was q2 in my opinion.  In Q2, my lane_closure_traffic_impact tool returned the following summary:
 
-
-	TOOL 2 | NEARBY ACTIVE WORKS & LANE RESTRICTIONS
-    Feed: fldot | Center: (27.9472, -82.4624) | Radius: 0.5 mi
-    Scope: all roads within radius; work status must be active NOW.
-	SUMMARY
+"TOOL 2 | NEARBY ACTIVE WORKS & LANE RESTRICTIONS
+Feed: fldot | Center: (27.9472, -82.4624) | Radius: 0.5 mi
+Scope: all roads within radius; work status must be active NOW.
+SUMMARY
   Active WZDx records: 22
   Grouped work IDs (approx. projects): 7
   Reported closed general-lane entries: 4
@@ -111,7 +110,7 @@ My best result was q2 in my opinion.  In Q2, my lane_closure_traffic_impact tool
   Their restrictions may affect different roads, directions, and segments.
   INCOMPLETE DATA: missing lane lists prevent a complete closure count.
   Lane totals count feed entries, NOT unique blocked lanes or capacity reduction.
-  No delay, queue length, travel-time, or capacity estimate is calculated.
+  No delay, queue length, travel-time, or capacity estimate is calculated."
 
 
 
