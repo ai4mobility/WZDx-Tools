@@ -17,9 +17,9 @@ The three setups:
 
 | Question | A. Without your tools | B. Your tools, plain | C. Your tools as written |
 |---|---|---|---|
-| bayshore_blvd | F | D | C |
-| north_oregon | D | F | C |
-| south_village | F | F | F |
+| bayshore_blvd | Wrong | Wrong | Partly: Good info, but incorrect active zone|
+| north_oregon | Wrong | Wrong | Partly: Incorrect date |
+| south_village | Wrong | Wrong | Wrong |
 
 ## What my tools changed
 
