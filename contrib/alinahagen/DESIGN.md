@@ -117,7 +117,7 @@ SUMMARY
 
 Scope and time: The tool evaluated active work zones across all roads within 0.5 miles of the Kennedy Boulevard and S Rome Avenue intersection. Unlike Tool 1, it assesses work zones active at the time of the query rather than 2023
 
-Verdict and units: The tool identified 22 active WZDx records grouped into seven approximate projects, with four reported closed general-lane entries and one supplemental-lane entry. Distances are measured in miles.
+Verdict and units: The tool identified 22 active WZDx records grouped into seven approximate projects, "Reported closed general-lane entries: 4", and one supplemental-lane entry. Distances are measured in miles. 
 
 Definitions and unknowns: A record represents an individual WZDx entry, while a work ID groups records associated with approximately the same construction project. Importantly, 19 records lacked lane data, meaning the complete number of closed lanes was unknown.
 
