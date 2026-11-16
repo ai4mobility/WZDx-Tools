@@ -19,7 +19,8 @@ single record indicates. This tool groups records by proximity and time window a
 when more than one closure is active in the same area. Tools must count how many distinct work identifiers are present in the corridor and flag when that count exceeds one.
 
 **Source:** Nov 5 2026 FDOT snapshot — 7 simultaneous active work zone records observed
-within 0.5 mi of Kennedy Blvd between Armenia Ave and Howard Ave, Tampa.
+within 0.5 mi of Kennedy Blvd between Armenia Ave and Howard Ave, Tampa. I did end up using Kennedy as my main 
+testing case, as I knew I could evaluate if my agent picked up on the construction there. 
 
 ---
 
