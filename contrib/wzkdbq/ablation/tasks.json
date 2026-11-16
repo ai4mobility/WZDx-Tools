@@ -1,0 +1,25 @@
+{
+  "about": "Snapshot reference answers recorded before model runs. Codex derived these from the named raw FDOT features; review them before grading.",
+  "env": {
+    "WZDX_SNAPSHOT": "snapshots/2026-11-05",
+    "WZDX_NOW": "1793888460"
+  },
+  "max_steps": 6,
+  "questions": [
+    {
+      "id": "busch_eastbound",
+      "question": "Dispatch reported a crash near USF. In the FDOT snapshot, what eastbound work-zone lane closure is reported on Busch Blvd within 5 mi of 28.0587, -82.4139? Give the affected travel lane and flag any record whose direction is missing.",
+      "answer": "FDOT reports an eastbound work-zone closure of the rightmost of three general travel lanes. Check snapshots/2026-11-05/fldot.json.gz feature 4577091647/292055206: lane order 4 is closed, orders 1 and 5 are shoulders, and orders 2 through 4 are general lanes. Feature 4577091647 has unknown direction and unknown impact; keep it separate from the eastbound match. This is work-zone evidence."
+    },
+    {
+      "id": "miami_detour",
+      "question": "For FDOT work-zone feature 4571671574, what published detours does the toolkit list, then which is northbound when checked by direction? Include its reported end time and whether the feed has verified the end.",
+      "answer": "The snapshot links two Miami Gardens detour records to 4571671574. The northbound record is 4571671574/291384760, named '441 nb to I95 nb using Miami Gardens Detour'; reported end is 2026-11-30 10:00 UTC (05:00 EST), unverified. The other linked feature, 4571671574/291384760-R, is southbound despite the identical name. Check snapshots/2026-11-05/fldot.json.gz, those three IDs, core_details.related_road_events, direction, end_date and is_end_date_verified."
+    },
+    {
+      "id": "busch_unknown_impact",
+      "question": "Check westbound Busch Blvd within 5 mi of 28.0587, -82.4139 in the FDOT work-zone snapshot. Can I tell dispatch that all westbound lanes are open and clear for a crash diversion? What is missing?",
+      "answer": "No. There is no explicitly westbound match on this road in the search, and the record with unknown direction also has unknown lane impact. FDOT feature 4577091647 has both fields unknown and no lane inventory. The lane closure in 4577091647/292055206 is eastbound, so do not transfer it westbound. Use dispatch, a camera or field staff to verify actual westbound availability and confirm diversion suitability. Check core_details.direction, vehicle_impact and lanes in snapshots/2026-11-05/fldot.json.gz."
+    }
+  ]
+}
