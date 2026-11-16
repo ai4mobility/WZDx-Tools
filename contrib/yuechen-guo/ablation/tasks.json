@@ -1,0 +1,25 @@
+{
+  "about": "I use these three questions to check whether the model can report a sidewalk closure, read its estimated end time, and explain what the report tells me about my walk to class.",
+  "env": {
+    "WZDX_SNAPSHOT": "snapshots/2026-11-05",
+    "WZDX_NOW": "1793888460"
+  },
+  "max_steps": 8,
+  "questions": [
+    {
+      "id": "sidewalk_end_time",
+      "question": "I walk to class on North 30th Street near USF (28.0587, -82.4139). When is the sidewalk closure expected to end, in local time?",
+      "answer": "Both closure records give the same estimated end time of December 15, 2026, at 4:00 PM EST. I still need confirmation that the sidewalk has reopened. I checked the end_date and end_date_accuracy fields in snapshots/2026-11-05/fldot.json.gz for records 4233451340/245269615 and 4233451340/245269615-R."
+    },
+    {
+      "id": "sidewalk_closure_and_detour",
+      "question": "I walk to class near USF at (28.0587, -82.4139). Is there a reported sidewalk closure on North 30th Street? When is it expected to end, and does the report tell me which way to walk around it?",
+      "answer": "Yes. The snapshot reports a footway closure on North 30th Street in two records, one northbound and one southbound. Both give an estimated end of December 15, 2026, at 4:00 PM EST. Neither description gives walking directions, and neither record has a linked detour. The direction labels describe the closure records and give me no route to follow. I checked records 4233451340/245269615 and 4233451340/245269615-R in snapshots/2026-11-05/fldot.json.gz and checked the linked detours for both IDs."
+    },
+    {
+      "id": "southbound_extra_walking_time",
+      "question": "I walk to class on North 30th Street. For work zone 4233451340/245269615-R in Florida, does the report say which way I should walk around the closed sidewalk? How much longer will my walk take?",
+      "answer": "The southbound record reports a footway closure. Its description gives no walking directions, and the record has no linked detour. I cannot tell from this record which way to walk or how many extra minutes the walk would take. The estimated construction end time does not tell me the length of my walk. I checked the description and linked detours for record 4233451340/245269615-R in snapshots/2026-11-05/fldot.json.gz."
+    }
+  ]
+}
