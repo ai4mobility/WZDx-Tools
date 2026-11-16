@@ -64,10 +64,10 @@ transcripts: where did the model read it right, where did it read it wrong, and 
 
 	In Q1, my work_zones_during_hours tool returned:
 	TOOL 1 | WORK-ZONE DATE/TIME CONFLICT SCREEN
-Feed: fldot | Road searched: Kennedy Blvd
-Center: (30.2813, -86.1215) | Radius: 1 mi
-Window: 2023-10-05 11:00 EDT to 2023-10-05 14:00 EDT
-Scope: feed records active/pending NOW, matching road name and radius.
+    Feed: fldot | Road searched: Kennedy Blvd
+    Center: (30.2813, -86.1215) | Radius: 1 mi
+    Window: 2023-10-05 11:00 EDT to 2023-10-05 14:00 EDT
+    Scope: feed records active/pending NOW, matching road name and radius.
 	FILTER RESULTS
   Active/pending records within radius (any road): 0
   Matching requested road: 0
@@ -81,15 +81,16 @@ Scope: feed records active/pending NOW, matching road name and radius.
   Based on current information, permit can proceed as planned.
   Verify coverage, lane restrictions, and field conditions before permit approval.
 	
-	Scope and time: The tool evaluated a one-mile radius around the supplied coordinates for October 5, 2023, from 11 AM to 2 PM EDT. However, these were incorrect coordinates and an incorrect date, so the results did not represent the requested Tampa location.
-	Verdict and units: The tool reported zero matching records and suggested the permit could proceed. The search radius was measured in miles, coordinates in decimal degrees, and time in local hours (All correct)
-	Warnings: The tool recommended verifying coverage, lane restrictions, and field conditions before approval. However, this warning was undermined by its previous statement that the permit could proceed.
-	Improvement: Based on this analysis, I added sveral more geographic failsafes to the server instructions and the tool coding. In the server instructions, I added more instructions on stopping consideration when lat/long wasn't provided. I also explicitly made the tool stop and throw an error if long/lat was null. Many of my problems stemmed from fake coordinates the model made up for kennedy. 
+
+Scope and time: The tool evaluated a one-mile radius around the supplied coordinates for October 5, 2023, from 11 AM to 2 PM EDT. However, these were incorrect coordinates and an incorrect date, so the results did not represent the requested Tampa location.
+Verdict and units: The tool reported zero matching records and suggested the permit could proceed. The search radius was measured in miles, coordinates in decimal degrees, and time in local hours (All correct)
+Warnings: The tool recommended verifying coverage, lane restrictions, and field conditions before approval. However, this warning was undermined by its previous statement that the permit could proceed.
+Improvement: Based on this analysis, I added sveral more geographic failsafes to the server instructions and the tool coding. In the server instructions, I added more instructions on stopping consideration when lat/long wasn't provided. I also explicitly made the tool stop and throw an error if long/lat was null. Many of my problems stemmed from fake coordinates the model made up for kennedy. 
 	
 	My best result was q2 in my opinion.  In Q2, my lane_closure_traffic_impact tool returned the following summary:
 	TOOL 2 | NEARBY ACTIVE WORKS & LANE RESTRICTIONS
-Feed: fldot | Center: (27.9472, -82.4624) | Radius: 0.5 mi
-Scope: all roads within radius; work status must be active NOW.
+    Feed: fldot | Center: (27.9472, -82.4624) | Radius: 0.5 mi
+    Scope: all roads within radius; work status must be active NOW.
 	SUMMARY
   Active WZDx records: 22
   Grouped work IDs (approx. projects): 7
@@ -104,10 +105,11 @@ Scope: all roads within radius; work status must be active NOW.
   INCOMPLETE DATA: missing lane lists prevent a complete closure count.
   Lane totals count feed entries, NOT unique blocked lanes or capacity reduction.
   No delay, queue length, travel-time, or capacity estimate is calculated.
-	Scope and time: The tool evaluated active work zones across all roads within 0.5 miles of the Kennedy Boulevard and S Rome Avenue intersection. Unlike Tool 1, it assesses work zones active at the time of the query rather than 2023
-	Verdict and units: The tool identified 22 active WZDx records grouped into seven approximate projects, with four reported closed general-lane entries and one supplemental-lane entry. Distances are measured in miles.
-	Definitions and unknowns: A record represents an individual WZDx entry, while a work ID groups records associated with approximately the same construction project. Importantly, 19 records lacked lane data, meaning the complete number of closed lanes was unknown.
-	Warnings: The tool correctly warned that nearby projects might affect different roads or directions 
-	Agent interpretation: The agent correctly identified the four general-lane entries and one supplemental-lane, but it didn't communicate that 19 records lacked lane data, which was a significant limitation of the results.
-	Proposed improvement: I thought this response was fairly well done for my goal. My next improvement I would have worked towards would have been trying to quantify the impact severity (issuing this permit would have a low, moderate, or severe impact)
+
+Scope and time: The tool evaluated active work zones across all roads within 0.5 miles of the Kennedy Boulevard and S Rome Avenue intersection. Unlike Tool 1, it assesses work zones active at the time of the query rather than 2023
+Verdict and units: The tool identified 22 active WZDx records grouped into seven approximate projects, with four reported closed general-lane entries and one supplemental-lane entry. Distances are measured in miles.
+Definitions and unknowns: A record represents an individual WZDx entry, while a work ID groups records associated with approximately the same construction project. Importantly, 19 records lacked lane data, meaning the complete number of closed lanes was unknown.
+Warnings: The tool correctly warned that nearby projects might affect different roads or directions 
+Agent interpretation: The agent correctly identified the four general-lane entries and one supplemental-lane, but it didn't communicate that 19 records lacked lane data, which was a significant limitation of the results.
+Proposed improvement: I thought this response was fairly well done for my goal. My next improvement I would have worked towards would have been trying to quantify the impact severity (issuing this permit would have a low, moderate, or severe impact)
 
