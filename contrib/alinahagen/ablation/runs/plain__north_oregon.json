@@ -1,0 +1,53 @@
+{
+ "harness": "ablation.py",
+ "model": "Qwen/Qwen3-1.7B",
+ "thinking": false,
+ "seed": 1,
+ "server": "contrib/alinahagen/server.py",
+ "date": "2026-11-15T21:35:14-05:00",
+ "data": "WZDx snapshot snapshots/2026-11-05",
+ "device": "mps",
+ "setup": "plain",
+ "descriptions_of_your_tools": {
+  "work_zones_during_hours": "Screen active/pending work zones by street, radius and local date/time. feed, street, near_lat, near_lon, radius_mi, start_hour, end_hour, optional check_date (YYYY-MM-DD). Read-only.",
+  "lane_closure_traffic_impact": "Report active nearby work IDs and lane-closure entries by type. feed, near_lat, near_lon, radius_mi. Read-only."
+ },
+ "tools_served": [
+  "list_feeds",
+  "get_work_zones",
+  "check_location",
+  "get_detours",
+  "feed_quality",
+  "work_zones_during_hours",
+  "lane_closure_traffic_impact"
+ ],
+ "instructions": "Work zones from public WZDx feeds (USDOT format): Florida (FL, FDOT via One.network), Arizona (AZ) and others from list_feeds. Times are local. Most work zones do not report lane impact and none has a verified position: say \"unknown\" and \"reported\", never \"open\" or \"confirmed\". No reported work zone does not mean none exists.",
+ "calls": [
+  {
+   "name": "list_feeds",
+   "arguments": {
+    "state": "florida"
+   },
+   "check": "ok",
+   "result": "1 feed(s) in the USDOT WZDx registry for florida:\n- fldot: Florida DOT (florida) · WZDx 4.2 · open"
+  },
+  {
+   "name": "get_work_zones",
+   "arguments": {
+    "feed": "fldot",
+    "road": "North Oregon Avenue",
+    "near_lat": 27.958576,
+    "near_lon": -82.47465,
+    "radius_mi": 0.5
+   },
+   "check": "ok",
+   "result": "0 active work zone(s) match in the fldot feed (WZDx 4.2, updated Thu Nov 5 09:21 EST); showing 0. Lane impact unknown for 0 of 0."
+  }
+ ],
+ "answer": "0 active work zones were found near North Oregon Avenue (27.958576, -82.474650) in the fldot feed. The lane impact is unknown for 0 of 0 work zones.",
+ "note": null,
+ "turns": 3,
+ "model_s": 24.9,
+ "question_id": "north_oregon",
+ "question": "We are considering a road closure on North Oregon Avenue (27.958576, -82.474650). Are there any nearby construction projects that might create traffic conflicts?"
+}

@@ -7,19 +7,19 @@
  "max_steps": 8,
  "questions": [
   {
-   "id": "busch_lanes",
-   "question": "Is any work reported on Busch Blvd near USF (28.0587, -82.4139) right now, and which lanes are closed?",
-   "answer": "Yes: one work by the City of Tampa on East Busch Boulevard, about 2 mi from the point, reported as 2 records, until Thu Nov 5 at 4:00 pm. Eastbound, the right lane of 3 travel lanes is closed (the feed lists it as lane 4 of 5, because it counts the shoulders). The other record gives no direction and no lane impact. Checked in snapshots/2026-11-05/fldot.json, work 4577091647."
+   "id": "bayshore_blvd",
+   "question": "I am planning utility work on Bayshore Boulevard (27.932268, -82.472911). How many active work zones are currently reported on this road?",
+   "answer": "No active work zones are reported on Bay Boulevard. However, the absence of reported work zones does not necessarily indicate that the roadway is free of construction."
   },
   {
-   "id": "thirtieth_works",
-   "question": "How many separate works (permits or projects) are reported on 30th St near USF (28.0587, -82.4139) right now?",
-   "answer": "Two: a new sewer main (permit ROW-25-0001919, reported as 3 records, until Dec 15) and a wastewater repair (CWS-27-0000027, 1 record, until Nov 6 at 5:00 pm). The feed has 4 records, not 4 works. Checked in snapshots/2026-11-05/fldot.json, works 4233451340 and 4519480375."
+   "id": "north_oregon",
+   "question": "We are considering a road closure on North Oregon Avenue (27.958576, -82.474650). Are there any nearby construction projects that might create traffic conflicts?",
+   "answer": "The proposed closure warrants further review due to existing construction activity on North Rome Avenue and Chestnut Street. These nearby projects may contribute to traffic disruptions, so additional coordination is recommended before approving the permit."
   },
   {
-   "id": "thirtieth_lanes",
-   "question": "Does the sewer work on 30th St near USF (28.0587, -82.4139) close any lanes?",
-   "answer": "The feed does not say: every record of the 30th St works reports its lane impact as unknown. That is not the same as no lanes closed. Checked in snapshots/2026-11-05/fldot.json: vehicle_impact is 'unknown' on all 4 records."
+   "id": "south_village",
+   "question": "I am planning to schedule construction work on South Village Avenue (28.062669, -82.480072). Are there existing work zones nearby that might affect whether the permit should be approved?",
+   "answer": "The proposed work should be reconsidered due to the substantial amount of existing construction activity in the surrounding area. Additional review and coordination are recommended before issuing another closure permit."
   }
  ]
 }

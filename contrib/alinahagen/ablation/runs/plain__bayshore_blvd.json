@@ -1,0 +1,51 @@
+{
+ "harness": "ablation.py",
+ "model": "Qwen/Qwen3-1.7B",
+ "thinking": false,
+ "seed": 1,
+ "server": "contrib/alinahagen/server.py",
+ "date": "2026-11-15T21:33:46-05:00",
+ "data": "WZDx snapshot snapshots/2026-11-05",
+ "device": "mps",
+ "setup": "plain",
+ "descriptions_of_your_tools": {
+  "work_zones_during_hours": "Screen active/pending work zones by street, radius and local date/time. feed, street, near_lat, near_lon, radius_mi, start_hour, end_hour, optional check_date (YYYY-MM-DD). Read-only.",
+  "lane_closure_traffic_impact": "Report active nearby work IDs and lane-closure entries by type. feed, near_lat, near_lon, radius_mi. Read-only."
+ },
+ "tools_served": [
+  "list_feeds",
+  "get_work_zones",
+  "check_location",
+  "get_detours",
+  "feed_quality",
+  "work_zones_during_hours",
+  "lane_closure_traffic_impact"
+ ],
+ "instructions": "Work zones from public WZDx feeds (USDOT format): Florida (FL, FDOT via One.network), Arizona (AZ) and others from list_feeds. Times are local. Most work zones do not report lane impact and none has a verified position: say \"unknown\" and \"reported\", never \"open\" or \"confirmed\". No reported work zone does not mean none exists.",
+ "calls": [
+  {
+   "name": "list_feeds",
+   "arguments": {
+    "state": "florida"
+   },
+   "check": "ok",
+   "result": "1 feed(s) in the USDOT WZDx registry for florida:\n- fldot: Florida DOT (florida) · WZDx 4.2 · open"
+  },
+  {
+   "name": "get_work_zones",
+   "arguments": {
+    "feed": "fldot",
+    "road": "Bayshore Boulevard",
+    "radius_mi": 5.0
+   },
+   "check": "ok",
+   "result": "1 active work zone(s) match in the fldot feed (WZDx 4.2, updated Thu Nov 5 09:21 EST); showing 1. Lane impact unknown for 1 of 1.\n- Bayshore Boulevard · southbound · lane impact unknown (not reported)\n  ROW-26-0002424 Concrete slab repairs\n  Wed Oct 14 08:30 EDT to Fri Nov 6 15:30 EST · reported by City of Tampa, Florida · position not verified, dates not verified · id 4475220461"
+  }
+ ],
+ "answer": "The active work zone on Bayshore Boulevard is reported as \"lane impact unknown\" and is not verified. There is 1 active work zone reported on Bayshore Boulevard.",
+ "note": null,
+ "turns": 3,
+ "model_s": 22.3,
+ "question_id": "bayshore_blvd",
+ "question": "I am planning utility work on Bayshore Boulevard (27.932268, -82.472911). How many active work zones are currently reported on this road?"
+}
