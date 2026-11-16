@@ -84,6 +84,14 @@ def test_event_status_filtering():
     # Planned records should not appear as active conflicts
     check('test_no_planned_label_in_output', '[PLANNED]' not in result)
 
+def test_plain_vs_lane_closure_traffic_impact():
+    from contrib.alinahagen.tools import lane_closure_traffic_impact_plain
+    full  = lane_closure_traffic_impact('FL', 27.9472, -82.4677, radius_mi=0.5)
+    plain = lane_closure_traffic_impact_plain('FL', 27.9472, -82.4677, radius_mi=0.5)
+    check('plain_vs_full_outputs_differ',      full != plain)
+    check('full_version_has_more_detail',      len(full) >= len(plain))
+    check('full_has_screening_interpretation', 'SCREENING INTERPRETATION' in full)
+    
 if __name__ == '__main__':
     test_general_vs_nontravellane_types()
     test_multiple_closures_flagged()
