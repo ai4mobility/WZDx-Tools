@@ -46,3 +46,18 @@ treating all records as active closures.
 **Source:** WZDx spec, spec-content/enumerated-types/EventStatus.md
 github.com/usdot-jpo-ode/wzdx/blob/develop/spec-content/enumerated-types/EventStatus.md
 Note: deprecated as of WZDx v4.1.
+
+
+### AI Use Diclousre
+AI Use Disclosure 
+1. I choose Track W - I originally wanted to use SUMO, and considered asking Claude to help me with setting it up, as I originally wanted to do something with a simulation. However, I will be honest, I misread the due date for this assignment, and had less time then I had hoped to complete this assignment. So, I choose to do Track W as that seemed more manageable and I would need less AI assistance in understanding it. My original idea was to try and simulate what traffic impacts would happen if you shut down certain corridors for "pedestrian hours" (the idea of walkable cities). I couldn’t do that with Track W, so I tried to do something similar with trying to estimate how bad it would be to close down roads based on what's already closed around it. (I specifically wanted to test closing things around meal times, like Lunch and Dinner)
+  
+2. I did use Claude to help me find where WZDx kept some of its data dictionaries. Once I found the enumerated-types tab on the Github, that got a lot easier.  Claude made suggestion for my tools based on a slight misunderstanding I had -- I originally wanted to have the tool take into account what time the permit requester was setting for the permit, and determine if that was a high volume traffic time. This is not possible with the data WZDx has, and that was one misunderstanding I had. 
+	
+3. I did use Claude to help with suggestions for some wording for some of the rules or tasks, but only after I had fully drafted the rules and knew what I wanted them to say. 
+
+4. All git commands and coding adjustments were done with Claude. One issue i ran into was having to set up a virtual environment on my machine, as for some reason my Mac, despite having Python 3.13, did not want to run this assignment as was. The virtual environment worked great though, but it did take some set up.
+
+
+
+
