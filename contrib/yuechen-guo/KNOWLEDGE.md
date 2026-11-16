@@ -12,12 +12,7 @@
 
 ## Plain vs. yours
 
-The plain version (`work_zones_on_street_plain`) does what a text search does: every record whose road name
-contains the words typed. On the Nov 5 snapshot it returns "0 work zones found" for Busch Blvd, while the right
-lane of 3 was closed eastbound on East Busch Boulevard until 4 pm. For 30th St it returns 4 "work zones" where
-there are 2 works (a sewer main project reported as 3 records, and a wastewater repair). An analyst who trusted the
-first answer would miss the only lane closure near campus; one who trusted the second would double-count the work.
-`test_plain_vs_work_zones_on_street` checks both cases.
+On North 30th Street, both versions found the same footway closure records. The plain tool returned the raw fields, and Qwen gave me only the date, December 15, 2026. The full tool displayed “2026-12-15 16:00 EST (estimated).” Qwen then gave the local time and explained that I would still need to check whether the sidewalk had reopened. The test for this comparison is `test_plain_vs_find_sidewalk_closures`.
 
 ## What the data cannot tell
 
@@ -27,7 +22,4 @@ The record gives no walking directions and has no linked detour. A pedestrian de
 
 ## AI use
 
-Claude (Opus 5.5) wrote this template, code and card, for the course. The examples and the expected answers in the
-tests were found by querying the saved feed, and each one was checked against the raw records in
-`snapshots/2026-11-05/fldot.json.gz`. In your card, say which AI tools you used and for what, and which rules,
-sources and expected answers you checked yourself.
+I used ChatGPT to help write the Python tools and tests. I ran the tools and tests on my Mac. I checked the North 30th Street record in the Florida snapshot, including its footway closure description, estimated end date, and verification fields. I also queried the northbound and southbound record IDs separately to check for linked detours. I used Qwen/Qwen3-1.7B as the local model for the agent runs and ablation.
