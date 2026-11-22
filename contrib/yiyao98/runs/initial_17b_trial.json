@@ -1,0 +1,16 @@
+{
+  "status": "interrupted_for_runtime_before_first_reply",
+  "model": "Qwen/Qwen3-1.7B",
+  "revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+  "stopped_at": "2026-11-21T23:12:31.998660-05:00",
+  "reason": "First generation remained unfinished more than seven minutes after starting. Formal experiments selected Qwen3-0.6B on runtime grounds before any completed model answer was viewed.",
+  "preserved": [
+    "initial_17b_console.txt",
+    "initial_17b_mcp.txt",
+    "q1_initial_adapter.txt",
+    "before_fix_tools.py.txt",
+    "before_fix_server.py.txt"
+  ],
+  "not_a_completed_agent_run": true,
+  "no_model_reply_was_available": true
+}
