@@ -1,0 +1,64 @@
+"""Initial, unmodified-harness observation; no reference answer enters the prompt."""
+import asyncio
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+BASE = Path(__file__).resolve().parent
+REPO = BASE / 'WZDx-Tools'
+HERE = REPO / 'contrib/yiyao98'
+os.chdir(REPO)
+os.environ.update(WZDX_SNAPSHOT=str(REPO / 'snapshots/2026-11-05'), WZDX_NOW='1793888460',
+                 ABLATION='full', TOKENIZERS_PARALLELISM='false', TZ='America/New_York')
+time.tzset()
+sys.path.insert(0, str(REPO / 'contrib'))
+import agent_loop as AL
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+REV = '70d244cc86ccca08cf5af4e1e306ecf908b1ad5e'
+MODEL = 'Qwen/Qwen3-1.7B'
+
+class LocalModel(AL.Model):
+    def __init__(self):
+        self.torch, self.think, self.seed, self.stream, self.device = torch, True, 1, False, 'cpu'
+        torch.set_num_threads(4)
+        torch.backends.quantized.engine = 'fbgemm'
+        kw = dict(revision=REV, cache_dir=str(BASE / 'hf_cache'), local_files_only=True)
+        self.tok = AutoTokenizer.from_pretrained(MODEL, **kw)
+        self.lm = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.float32,
+                                                     low_cpu_mem_usage=True, **kw).eval()
+        self.lm = torch.quantization.quantize_dynamic(self.lm, {torch.nn.Linear},
+                                                     dtype=torch.qint8, inplace=True)
+
+async def main():
+    tasks = json.loads((HERE / 'ablation/tasks.json').read_text())
+    name = 'q1_before_fix'
+    out = HERE / 'runs'
+    out.mkdir(exist_ok=True)
+    assert not any((out / (name + ext)).exists() for ext in ('.json', '.md', '.mcp.jsonl'))
+    log = str(out / (name + '.mcp.jsonl'))
+    hashes = {p: hashlib.sha256((HERE / p).read_bytes()).hexdigest()
+              for p in ('tools.py', 'server.py', 'ablation/tasks.json')}
+    print('Loading CPU dynamic-int8 model', flush=True)
+    model = LocalModel()
+    print('Starting original agent_loop.loop', flush=True)
+    rec = await AL.loop(str(HERE / 'server.py'), tasks['questions'][0]['question'],
+                        dict(model=MODEL, think=True, seed=1, max_steps=8, max_new=2048,
+                             stream=False), log, model=model)
+    rec['runtime_adapter'] = dict(script='work/run_initial.py', revision=REV, dtype='float32 then dynamic qint8 Linear',
+                                  quantized_engine=torch.backends.quantized.engine, threads=torch.get_num_threads(),
+                                  quantized_linear_count=sum(isinstance(m, torch.nn.quantized.dynamic.Linear)
+                                                             for m in model.lm.modules()),
+                                  max_new_tokens=2048, max_steps=8, code_and_task_sha256=hashes,
+                                  prompt_and_write='inherited unchanged from contrib/agent_loop.py')
+    (out / (name + '.json')).write_text(json.dumps(rec, indent=1, ensure_ascii=False) + '\n')
+    (out / (name + '.md')).write_text(AL.transcript(rec))
+    print(json.dumps(dict(answer=rec.get('answer'), note=rec.get('note'),
+                          calls=[c['name'] for s in rec['steps'] for c in s.get('calls', [])],
+                          total_s=rec['total_s']), indent=2), flush=True)
+
+asyncio.run(main())

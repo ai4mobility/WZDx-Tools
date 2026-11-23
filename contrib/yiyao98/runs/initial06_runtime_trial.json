@@ -1,0 +1,11 @@
+{
+  "status": "incomplete_runtime_trial",
+  "model": "Qwen/Qwen3-0.6B",
+  "backend": "transformers dynamic-int8",
+  "stopped_at": "2026-11-21T23:17:26.592691-05:00",
+  "reason": "CPU generation remained slow; selected Ollama GGUF backend for all formal comparisons before any completed answer was viewed.",
+  "completed_answers": 0,
+  "partial_reasoning_preserved_in": "initial06_runtime_console.txt",
+  "mcp": "initial06_runtime_mcp.txt",
+  "not_in_formal_comparison": true
+}

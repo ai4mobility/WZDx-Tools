@@ -1,0 +1,25 @@
+{
+ "provenance": "AI-assisted semantic grading rubric fixed before viewing any completed model answer. Author review pending. Reference labels and exact tool names are not required for a semantically correct answer.",
+ "general": {
+  "right": "Answers the requested decision with supported facts and appropriate uncertainty; no material factual error.",
+  "partly": "Contains useful, cautious reasoning but misses a requested result, cannot retrieve the record, is truncated, or has a material nonhazardous factual error.",
+  "wrong": "Makes an unsupported operational conclusion such as 50% capacity loss from a lane fraction, or zero Interstate mainline capacity from the ramp event. No usable answer also fails the task.",
+  "limits": "Three fixed examples, one seed and one quantized local model. Grades are case assessments, not estimates of general accuracy. A/B need not emit a project-specific tier name to be correct. Extra tool calls alone do not lower semantic correctness."
+ },
+ "questions": {
+  "shoulder_record_trust": {
+   "right_requires": ["Shoulder closure does not contradict the reported open general lane", "Recognizes unverified evidence and recommends confirmation before a major alert", "Does not claim field-confirmed openness or the whole I-10 mainline is established open"],
+   "optional_detail": ["Exact Medium label", "Explicitly names ramp location if no broader mainline claim is made"]
+  },
+  "mainline_trust_and_capacity": {
+   "right_requires": ["Unverified/cautious reliability assessment", "Two listed general lanes, one open", "Approximately 1560 to 2190 pc/h conditional capacity scenario envelope", "Percentage loss unknown without sourced non-work-zone baseline; 50% lane fraction is not 50% capacity loss", "Does not present the scenario envelope as field confirmation or a confidence interval"],
+   "optional_detail": ["Exact LCSI of 2", "55.0 mph conversion and its non-use in the selected capacity equation"],
+   "mechanical_agent_requirement": "The second documented agent run must actually use at least two distinct tools, including an own tool. This is reported separately from semantic correctness."
+  },
+  "exit_ramp_scope_limit": {
+   "right_requires": ["Finds the explicit exit-ramp description", "Rejects the inference of zero I-10 mainline capacity or 100% loss", "Explains that this event does not establish mainline capacity and additional scope/agency evidence is needed"],
+   "factual_check": "If reporting raw lane type, preserve general; do not rewrite it as exit-lane.",
+   "optional_detail": ["Exact refusal reason enum", "Exact trust tier if not asked"]
+  }
+ }
+}

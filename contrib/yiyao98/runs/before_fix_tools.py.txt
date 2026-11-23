@@ -1,0 +1,971 @@
+"""TMC operator tools for WZDx work-zone record trust screening and freeway mainline capacity impact.
+
+- assess_record_trust: synthesizes lifecycle status, verification flags, lane-level consistency, and
+  evidence completeness into an operational trust tier (High / Medium / Low / Scheduled / Completed).
+- estimate_closure_capacity: applies the Maryland SHA Appendix A freeway work-zone capacity equation
+  (fixed alpha = 13.4%) across the public parameter domain to report a screening sensitivity envelope,
+  with bounded mainline scope protection and explicit input-quality checks.
+- estimate_closure_capacity_plain: baseline without domain rules, reporting raw listed-lane fraction
+  only (used in test_plain_vs_capacity_exit_ramp_scope).
+"""
+import json
+import math
+import os
+import re
+import sys
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+import wzdx_tools as T
+
+# Maryland SHA Work Zone Lane Closure Analysis Guidelines (rev. 2024-11-06), Appendix A, Table 1 & pp. 12-13.
+ALLOWED_LANE_CONFIGS = {
+    (2, 1), (2, 2),
+    (3, 1), (3, 2), (3, 3),
+    (4, 1), (4, 2), (4, 3),
+    (5, 2), (5, 3), (5, 4),
+}
+ALPHA_PERCENT = 13.4
+KPH_PER_MPH = 1.609344
+
+# Vehicular travel lanes used in consistency checks (shoulder is excluded).
+VEHICULAR_LANE_TYPES = {'general', 'exit-lane'}
+CLAIM_CLOSURE_IMPACTS = {'some-lanes-closed', 'all-lanes-closed', 'alternating-one-way'}
+
+# Bounded scope patterns for freeway mainline screening.
+INTERSTATE_ROAD_RE = re.compile(
+    r'^\s*(I-\d+|Interstate\s+\d+)(\s+(Northbound|Southbound|Eastbound|Westbound|NB|SB|EB|WB))?\s*$',
+    re.I,
+)
+INTERSTATE_TOKEN_RE = re.compile(r'\b(?:I[-\s]*|Interstate\s+)(\d+)\b', re.I)
+EXIT_RAMP_EVENT_RE = re.compile(
+    r'\b(?:exit\s+ramp|off[-\s]?ramp)\s+'
+    r'(?:is\s+)?(?:closed|closure|restricted|restriction|blocked|work)\b'
+    r'|\b(?:construction\s+work|roadwork|lane\s+closure|work)\s+'
+    r'(?:on|along)\s+(?:the\s+)?(?:exit\s+ramp|off[-\s]?ramp)\b', re.I,
+)
+OTHER_RAMP_OR_FRONTAGE_RE = re.compile(
+    r'\b(?:on[-\s]?ramp|entrance\s+ramp|frontage\s+(?:road|rd))\s+'
+    r'(?:is\s+)?(?:closed|closure|restricted|restriction|blocked|work)\b'
+    r'|\b(?:construction\s+work|roadwork|lane\s+closure|work)\s+'
+    r'(?:on|along)\s+(?:the\s+)?(?:ramp|on[-\s]?ramp|frontage\s+(?:road|rd))\b', re.I,
+)
+MAINLINE_WORK_RE = re.compile(
+    r'\b(?:construction\s+work|(?:long\s+term\s+)?road\s+construction|roadwork|'
+    r'(?:left\s+|right\s+)?lanes?\s+(?:closed|restricted)|lane\s+closure)\s+'
+    r'(?:on|along)\s+((?:I[-\s]*|Interstate\s+)\d+)\b', re.I,
+)
+
+
+def _scope_evidence(road_names: List[str], description: str) -> Dict[str, Any]:
+    """Bounded route/event check; location references to ramps are not event subjects."""
+    route_ids = set()
+    for name in road_names:
+        match = INTERSTATE_ROAD_RE.fullmatch(name)
+        if match:
+            route_ids.add(int(INTERSTATE_TOKEN_RE.search(match.group(1)).group(1)))
+    work_ids = set()
+    exit_event = bool(EXIT_RAMP_EVENT_RE.search(description))
+    other_event = bool(OTHER_RAMP_OR_FRONTAGE_RE.search(description))
+    direction = r'(?:\s+(?:Northbound|Southbound|Eastbound|Westbound|NB|SB|EB|WB))?'
+    facility = re.compile(r'^' + direction + r'\s+(exit\s+ramp|off[-\s]?ramp|on[-\s]?ramp|frontage\s+(?:road|rd))\b', re.I)
+    explicit_mainline = False
+    for clause in re.split(r'[.;\n]+', description):
+        for match in MAINLINE_WORK_RE.finditer(clause):
+            route_id = int(INTERSTATE_TOKEN_RE.search(match.group(1)).group(1))
+            named_facility = facility.search(clause[match.end():])
+            if named_facility:
+                label = named_facility.group(1).lower()
+                exit_event = exit_event or bool(re.match(r'exit|off', label))
+                other_event = other_event or not bool(re.match(r'exit|off', label))
+            else:
+                work_ids.add(route_id)
+        for route in INTERSTATE_TOKEN_RE.finditer(clause):
+            if int(route.group(1)) not in route_ids:
+                continue
+            tail = clause[route.end():]
+            subject = re.match(r'^' + direction + r'\s+mainline\b(.*)$', tail, re.I)
+            if subject and re.search(
+                r'\b(?:(?:left\s+|right\s+)?lanes?\s+(?:closed|restricted)|lane\s+closure|construction|roadwork|work)\b',
+                subject.group(1), re.I,
+            ):
+                explicit_mainline = True
+    return {
+        'exit_ramp_event': exit_event,
+        'other_non_mainline_event': other_event,
+        'mainline_supported': bool(route_ids & work_ids) or explicit_mainline,
+    }
+
+
+def _normalize_time_text(text: str) -> str:
+    """Normalize RFC 3339 timestamps for Python 3.10+ fromisoformat while preserving UTC offset."""
+    t = text.strip()
+    if t[-1:] in ('Z', 'z'):
+        t = t[:-1] + '+00:00'
+    if '.' in t:
+        head, frac = t.split('.', 1)
+        i = 0
+        while i < len(frac) and frac[i].isdigit():
+            i += 1
+        digits, rest = frac[:i], frac[i:]
+        if not digits:
+            raise ValueError('fractional seconds contain no digits')
+        t = f'{head}.{digits[:6].ljust(6, "0")}{rest}'
+    return t
+
+
+def _parse_time(text: Any) -> Optional[datetime]:
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(_normalize_time_text(text))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _ref_time_utc() -> datetime:
+    """Resolve unified reference time from wzdx_tools._now() (WZDX_NOW)."""
+    now = T._now()
+    if isinstance(now, datetime):
+        return now.astimezone(timezone.utc) if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    if isinstance(now, (int, float)):
+        return datetime.fromtimestamp(now, tz=timezone.utc)
+    parsed = _parse_time(str(now))
+    if parsed is not None:
+        return parsed
+    return datetime.now(timezone.utc)
+
+
+def _get_field(feature: Dict[str, Any], name: str) -> Tuple[bool, Any]:
+    """Return (key_present, value) from properties or properties.core_details."""
+    props = feature.get('properties') or {}
+    if name in props:
+        return True, props[name]
+    core = props.get('core_details')
+    if isinstance(core, dict) and name in core:
+        return True, core[name]
+    return False, None
+
+
+def _record_id(feature: Dict[str, Any]) -> str:
+    props = feature.get('properties') or {}
+    for val in (feature.get('id'), props.get('road_event_id'), props.get('id')):
+        if val not in (None, ''):
+            return str(val)
+    return ''
+
+
+def _find_record(feed: str, record_id: str) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    F = T._load(feed)
+    target = str(record_id).strip()
+    for feat in F.get('wz', []):
+        if _record_id(feat) == target:
+            return F, feat
+    return F, None
+
+
+def _road_label(feature: Dict[str, Any]) -> str:
+    _, names = _get_field(feature, 'road_names')
+    if isinstance(names, list) and names:
+        return ', '.join(str(n) for n in names)
+    _, one = _get_field(feature, 'road_name')
+    return str(one) if one else 'road name not reported'
+
+
+def _source_metadata(feed_data: Dict[str, Any], feature: Dict[str, Any]) -> Dict[str, Any]:
+    info = feed_data.get('info') or {}
+    source_id = _get_field(feature, 'data_source_id')[1]
+    organization = None
+    for source in info.get('data_sources') or []:
+        if isinstance(source, dict) and str(source.get('data_source_id')) == str(source_id):
+            organization = source.get('organization_name')
+            break
+    return {'feed_update_date': info.get('update_date'), 'data_source_id': source_id,
+            'data_source_organization': organization}
+
+
+def _evaluate_lane_component(feature: Dict[str, Any]) -> Dict[str, Any]:
+    """Independent lane-breakdown and consistency check usable even on Scheduled/Completed records."""
+    lanes_present, lanes = _get_field(feature, 'lanes')
+    _, impact_raw = _get_field(feature, 'vehicle_impact')
+    impact = str(impact_raw) if impact_raw not in (None, '') else 'unknown'
+
+    if not lanes_present or lanes is None:
+        lanes_presence = 'missing'
+        lane_list: List[Dict[str, Any]] = []
+    elif not isinstance(lanes, list):
+        raise ValueError('Invalid lanes: expected a list, not another value type.')
+    elif len(lanes) == 0:
+        lanes_presence = 'empty'
+        lane_list = []
+    else:
+        lanes_presence = 'present'
+        if any(not isinstance(ln, dict) for ln in lanes):
+            raise ValueError('Invalid lanes: every lane entry must be an object.')
+        if any(not isinstance(ln.get(k), str) or not ln[k].strip()
+               for ln in lanes for k in ('type', 'status')):
+            raise ValueError('Invalid lanes: every lane requires nonempty type and status fields.')
+        lane_list = lanes
+
+    general_total = 0
+    general_open = 0
+    general_closed = 0
+    general_other_statuses: List[str] = []
+    exit_lane_total = 0
+    exit_lane_closed = 0
+    shoulder_total = 0
+    shoulder_closed = 0
+    other_non_vehicular: List[str] = []
+
+    vehicular_total = 0
+    vehicular_closed = 0
+    vehicular_alternating = 0
+
+    for ln in lane_list:
+        ltype = str(ln.get('type') or '')
+        lstatus = str(ln.get('status') or '')
+        if ltype == 'general':
+            general_total += 1
+            if lstatus == 'open':
+                general_open += 1
+            elif lstatus == 'closed':
+                general_closed += 1
+            else:
+                general_other_statuses.append(lstatus)
+        elif ltype == 'exit-lane':
+            exit_lane_total += 1
+            if lstatus == 'closed':
+                exit_lane_closed += 1
+        elif ltype == 'shoulder':
+            shoulder_total += 1
+            if lstatus == 'closed':
+                shoulder_closed += 1
+        else:
+            other_non_vehicular.append(f'{ltype}:{lstatus}')
+
+        if ltype in VEHICULAR_LANE_TYPES:
+            vehicular_total += 1
+            if lstatus == 'closed':
+                vehicular_closed += 1
+            if lstatus in ('alternating-flow', 'alternating-one-way'):
+                vehicular_alternating += 1
+
+    if lanes_presence != 'present':
+        consistency = 'not_evaluable_missing_lanes'
+        consistency_note = 'no lane breakdown reported'
+    elif impact == 'unknown':
+        consistency = 'no_confirmed_conflict'
+        consistency_note = 'vehicle_impact is unknown; relying on listed lane breakdown'
+    elif impact == 'all-lanes-open':
+        if vehicular_closed > 0:
+            consistency = 'conflict'
+            consistency_note = 'vehicle_impact claims all-lanes-open, but vehicular lane(s) are marked closed'
+        elif shoulder_closed > 0:
+            consistency = 'consistent'
+            consistency_note = 'all-lanes-open is consistent with shoulder-only closure(s)'
+        else:
+            consistency = 'consistent'
+            consistency_note = 'all-lanes-open matches listed vehicular lanes'
+    elif impact == 'alternating-one-way':
+        if vehicular_alternating > 0:
+            consistency = 'compatible_alternating_flow'
+            consistency_note = 'alternating-one-way matches alternating-flow lane status'
+        elif vehicular_closed > 0:
+            consistency = 'consistent'
+            consistency_note = 'alternating-one-way is consistent with closed vehicular lane(s)'
+        else:
+            consistency = 'conflict'
+            consistency_note = 'alternating-one-way requires a lane restriction, but no vehicular lane is closed or alternating'
+    elif impact in ('some-lanes-closed', 'all-lanes-closed'):
+        if vehicular_total == 0 or vehicular_closed == 0:
+            consistency = 'conflict'
+            if shoulder_closed > 0:
+                consistency_note = (
+                    f'vehicle_impact claims {impact}, but all listed vehicular lanes are open '
+                    f'and only shoulder(s) are marked closed'
+                )
+            else:
+                consistency_note = f'vehicle_impact claims {impact}, but no vehicular lane is marked closed'
+        elif impact == 'all-lanes-closed' and vehicular_closed < vehicular_total:
+            consistency = 'conflict'
+            consistency_note = 'vehicle_impact claims all-lanes-closed, but not all listed vehicular lanes are closed'
+        else:
+            consistency = 'consistent'
+            consistency_note = f'{impact} matches closed vehicular lane(s)'
+    else:
+        consistency = 'no_confirmed_conflict'
+        consistency_note = f'unrecognized vehicle_impact ({impact})'
+
+    return {
+        'vehicle_impact': impact,
+        'lanes_presence': lanes_presence,
+        'listed_lane_count': len(lane_list),
+        'general_total': general_total,
+        'general_open': general_open,
+        'general_closed': general_closed,
+        'general_other_statuses': general_other_statuses,
+        'exit_lane_total': exit_lane_total,
+        'exit_lane_closed': exit_lane_closed,
+        'shoulder_total': shoulder_total,
+        'shoulder_closed': shoulder_closed,
+        'other_non_vehicular': other_non_vehicular,
+        'vehicular_total': vehicular_total,
+        'vehicular_closed': vehicular_closed,
+        'consistency': consistency,
+        'consistency_note': consistency_note,
+    }
+
+
+def _evaluate_record_trust(feed: str, record_id: str) -> Dict[str, Any]:
+    """Structured trust evaluation for unit tests and formatted output."""
+    F, feat = _find_record(feed, record_id)
+    if feat is None:
+        return {'found': False, 'feed': F.get('name', feed), 'record_id': record_id}
+
+    ref = _ref_time_utc()
+    _, event_status = _get_field(feat, 'event_status')
+    _, start_raw = _get_field(feat, 'start_date')
+    _, end_raw = _get_field(feat, 'end_date')
+    _, update_raw = _get_field(feat, 'update_date')
+    start_dt = _parse_time(start_raw)
+    end_dt = _parse_time(end_raw)
+    update_dt = _parse_time(update_raw)
+
+    if start_dt is None or end_dt is None:
+        raise ValueError('Cannot assess trust: start_date and end_date must be parseable timestamps.')
+    if update_raw not in (None, '') and update_dt is None:
+        raise ValueError('Cannot assess trust: update_date is not a parseable timestamp.')
+    if event_status in (None, ''):
+        event_status = None
+    elif not isinstance(event_status, str) or event_status.strip().lower() not in ('active', 'pending', 'completed'):
+        raise ValueError('Cannot assess trust: event_status is not active, pending, or completed.')
+    if event_status is None and end_dt < ref and update_dt is None:
+        raise ValueError('Cannot assess trust: update_date is needed to compare a past planned end.')
+    verification_evidence = {}
+    verif_flags = []
+    for name in ('is_start_date_verified', 'is_end_date_verified',
+                 'is_start_position_verified', 'is_end_position_verified'):
+        present, value = _get_field(feat, name)
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f'Cannot assess trust: {name} must be a boolean when reported.')
+        verification_evidence[name] = {'present': present, 'value': value}
+        verif_flags.append(value is True)
+    any_verified = any(verif_flags)
+
+    lane_comp = _evaluate_lane_component(feat)
+    reasons: List[str] = []
+    flags: List[str] = []
+    time_component_cap: Optional[str] = None
+    lifecycle_state = 'active'
+
+    # 1. Time conflict always takes priority (start_date > end_date -> Low).
+    if start_dt and end_dt and start_dt > end_dt:
+        return {
+            'found': True,
+            **_source_metadata(F, feat),
+            'feed': F.get('name', feed),
+            'record_id': _record_id(feat),
+            'road_label': _road_label(feat),
+            'event_status': event_status,
+            'lifecycle_state': 'time_conflict',
+            'time_component_cap': 'Low',
+            'final_tier': 'Low',
+            'reasons': ['time_conflict'],
+            'flags': ['start_date_after_end_date'],
+            'verification': verif_flags,
+            'verification_evidence': verification_evidence,
+            'any_verified': any_verified,
+            'lane_component': lane_comp,
+            'start_date': start_raw,
+            'end_date': end_raw,
+            'update_date': update_raw,
+            'reference_time': ref.isoformat(),
+        }
+
+    # 2. Status-first lifecycle handling (aligned with wzdx_tools.py).
+    if event_status is not None:
+        status_norm = str(event_status).strip().lower()
+        if status_norm == 'completed':
+            return {
+                'found': True,
+                **_source_metadata(F, feat),
+                'feed': F.get('name', feed),
+                'record_id': _record_id(feat),
+                'road_label': _road_label(feat),
+                'event_status': event_status,
+                'lifecycle_state': 'completed',
+                'time_component_cap': None,
+                'final_tier': 'Completed',
+                'reasons': ['event_status_completed'],
+                'flags': [],
+                'verification': verif_flags,
+                'verification_evidence': verification_evidence,
+                'any_verified': any_verified,
+                'lane_component': lane_comp,
+                'start_date': start_raw,
+                'end_date': end_raw,
+                'update_date': update_raw,
+                'reference_time': ref.isoformat(),
+            }
+        if status_norm == 'pending':
+            return {
+                'found': True,
+                **_source_metadata(F, feat),
+                'feed': F.get('name', feed),
+                'record_id': _record_id(feat),
+                'road_label': _road_label(feat),
+                'event_status': event_status,
+                'lifecycle_state': 'scheduled',
+                'time_component_cap': None,
+                'final_tier': 'Scheduled',
+                'reasons': ['event_status_pending'],
+                'flags': [],
+                'verification': verif_flags,
+                'verification_evidence': verification_evidence,
+                'any_verified': any_verified,
+                'lane_component': lane_comp,
+                'start_date': start_raw,
+                'end_date': end_raw,
+                'update_date': update_raw,
+                'reference_time': ref.isoformat(),
+            }
+        # active (or other non-terminal status)
+        if start_dt and start_dt > ref:
+            flags.append('active_with_future_start')
+            time_component_cap = 'Medium'
+    else:
+        if start_dt and start_dt > ref:
+            return {
+                'found': True,
+                **_source_metadata(F, feat),
+                'feed': F.get('name', feed),
+                'record_id': _record_id(feat),
+                'road_label': _road_label(feat),
+                'event_status': None,
+                'lifecycle_state': 'scheduled',
+                'time_component_cap': None,
+                'final_tier': 'Scheduled',
+                'reasons': ['start_date_in_future'],
+                'flags': [],
+                'verification': verif_flags,
+                'verification_evidence': verification_evidence,
+                'any_verified': any_verified,
+                'lane_component': lane_comp,
+                'start_date': start_raw,
+                'end_date': end_raw,
+                'update_date': update_raw,
+                'reference_time': ref.isoformat(),
+            }
+        if end_dt and end_dt < ref:
+            if update_dt and update_dt >= end_dt:
+                lifecycle_state = 'past_end_with_post_end_update'
+                flags.append('past_end_with_post_end_update')
+                time_component_cap = 'Medium'
+            else:
+                lifecycle_state = 'past_end_without_post_end_update'
+                reasons.append('past_end_without_post_end_update')
+                time_component_cap = 'Low'
+
+    # 3. Evaluate Low triggers, then Medium caps, else High.
+    low_reasons: List[str] = []
+    if 'past_end_without_post_end_update' in reasons:
+        low_reasons.append('past_end_without_post_end_update')
+    if lane_comp['consistency'] == 'conflict':
+        low_reasons.append('lane_impact_conflict')
+    if (
+        lane_comp['vehicle_impact'] == 'unknown'
+        and lane_comp['lanes_presence'] != 'present'
+        and not any_verified
+    ):
+        low_reasons.append('unknown_and_no_lanes_and_unverified')
+
+    if low_reasons:
+        final_tier = 'Low'
+        reasons = low_reasons
+    else:
+        medium_reasons: List[str] = []
+        if time_component_cap == 'Medium':
+            medium_reasons.extend(flags)
+        if not any_verified:
+            medium_reasons.append('unverified_fields')
+        if lane_comp['lanes_presence'] != 'present':
+            medium_reasons.append('missing_lane_breakdown')
+
+        if medium_reasons:
+            final_tier = 'Medium'
+            reasons = medium_reasons
+        else:
+            final_tier = 'High'
+            reasons = ['active_verified_consistent_with_lanes']
+
+    return {
+        'found': True,
+        **_source_metadata(F, feat),
+        'feed': F.get('name', feed),
+        'record_id': _record_id(feat),
+        'road_label': _road_label(feat),
+        'event_status': event_status,
+        'lifecycle_state': lifecycle_state,
+        'time_component_cap': time_component_cap,
+        'final_tier': final_tier,
+        'reasons': reasons,
+        'flags': flags,
+        'verification': verif_flags,
+        'verification_evidence': verification_evidence,
+        'any_verified': any_verified,
+        'lane_component': lane_comp,
+        'start_date': start_raw,
+        'end_date': end_raw,
+        'update_date': update_raw,
+        'reference_time': ref.isoformat(),
+    }
+
+
+def _inspect_speed(feature: Dict[str, Any]) -> Dict[str, Any]:
+    key_present, raw = _get_field(feature, 'reduced_speed_limit_kph')
+    if not key_present or raw is None:
+        return {
+            'speed_status': 'missing',
+            'raw_kph': None,
+            'speed_mph_exact': None,
+            'speed_mph_display': None,
+        }
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
+        return {
+            'speed_status': 'invalid_nonnumeric',
+            'raw_kph': raw,
+            'speed_mph_exact': None,
+            'speed_mph_display': None,
+        }
+    if raw <= 0:
+        return {
+            'speed_status': 'invalid_nonpositive',
+            'raw_kph': float(raw),
+            'speed_mph_exact': None,
+            'speed_mph_display': None,
+        }
+    mph_exact = float(raw) / KPH_PER_MPH
+    return {
+        'speed_status': 'reported',
+        'raw_kph': float(raw),
+        'speed_mph_exact': mph_exact,
+        'speed_mph_display': round(mph_exact, 1),
+    }
+
+
+def _maryland_capacity_envelope(total_general: int, open_general: int) -> Dict[str, Any]:
+    """Enumerate parameter-box endpoints for Maryland SHA Appendix A freeway capacity equation."""
+    or_ratio = open_general / total_general
+    lcsi = 1.0 / (or_ratio * open_general)
+    totals: List[float] = []
+    per_lane: List[float] = []
+    for f_br in (0, 1):
+        for f_at in (0, 1):
+            for f_dn in (0, 1):
+                for f_lat in (0, 12):
+                    qdr = 2093.0 - 154.0 * lcsi - 194.0 * f_br - 179.0 * f_at + 9.0 * f_lat - 59.0 * f_dn
+                    c_wz = 100.0 * qdr / (100.0 - ALPHA_PERCENT)
+                    per_lane.append(c_wz)
+                    totals.append(open_general * c_wz)
+    c_min, c_max = min(totals), max(totals)
+    return {
+        'OR': or_ratio,
+        'LCSI': lcsi,
+        'per_open_lane_pcph_range': [min(per_lane), max(per_lane)],
+        'capacity_pcph_range': [c_min, c_max],
+        'capacity_pcph_display_range': [int(round(c_min, -1)), int(round(c_max, -1))],
+    }
+
+
+def _evaluate_closure_capacity(
+    feed: str,
+    record_id: str,
+    baseline_pcphpl: Optional[float] = None,
+    baseline_source: str = '',
+) -> Dict[str, Any]:
+    """Structured capacity screening evaluation for unit tests and formatted output."""
+    F, feat = _find_record(feed, record_id)
+    if feat is None:
+        return {'found': False, 'feed': F.get('name', feed), 'record_id': record_id}
+
+    lane_comp = _evaluate_lane_component(feat)
+    speed_info = _inspect_speed(feat)
+    _, road_names = _get_field(feat, 'road_names')
+    road_list = [str(n) for n in road_names] if isinstance(road_names, list) else []
+    _, desc_raw = _get_field(feat, 'description')
+    desc = str(desc_raw or '')
+    _, wz_type_raw = _get_field(feat, 'work_zone_type')
+    wz_type = str(wz_type_raw) if wz_type_raw not in (None, '') else None
+
+    refusal_reasons: List[str] = []
+
+    # 1. Event scope checks (collected independently).
+    scope = _scope_evidence(road_list, desc)
+    is_exit_ramp = scope['exit_ramp_event']
+    is_other_non_mainline = scope['other_non_mainline_event']
+
+    if is_exit_ramp:
+        refusal_reasons.append('non_mainline_exit_ramp')
+    elif is_other_non_mainline:
+        refusal_reasons.append('non_mainline_ramp_or_frontage')
+
+    if not is_exit_ramp and not is_other_non_mainline and not scope['mainline_supported']:
+        refusal_reasons.append('freeway_mainline_scope_unconfirmed')
+
+    # 2. Lane input checks (collected independently, never hidden by scope refusal).
+    if lane_comp['lanes_presence'] != 'present':
+        refusal_reasons.append('missing_lanes')
+    else:
+        if lane_comp['general_total'] == 0:
+            refusal_reasons.append('no_general_lanes')
+        else:
+            if lane_comp['general_other_statuses']:
+                refusal_reasons.append('unsupported_general_lane_status')
+            elif lane_comp['general_open'] == 0:
+                refusal_reasons.append('zero_open_general_lanes')
+            elif (lane_comp['general_total'], lane_comp['general_open']) not in ALLOWED_LANE_CONFIGS:
+                refusal_reasons.append('unsupported_lane_configuration')
+
+    # 3. Baseline validation affects percentages, not the independent absolute capacity.
+    baseline_valid = False
+    baseline_warning: Optional[str] = None
+    baseline_source_text = baseline_source.strip() if isinstance(baseline_source, str) else ''
+    percentage_issues: List[str] = []
+    if baseline_pcphpl is not None:
+        if isinstance(baseline_pcphpl, bool) or not isinstance(baseline_pcphpl, (int, float)) or not math.isfinite(baseline_pcphpl) or baseline_pcphpl <= 0:
+            percentage_issues.append('invalid_baseline_pcphpl')
+        else:
+            baseline_valid = True
+        if not baseline_source_text:
+            percentage_issues.append('missing_baseline_source')
+    else:
+        percentage_issues.append('missing_nonworkzone_baseline_capacity')
+
+    estimate_available = len(refusal_reasons) == 0
+    envelope = None
+    remaining_percent_range = None
+    loss_percent_range = None
+    missing_for_percent: Optional[str] = None
+    if 'missing_nonworkzone_baseline_capacity' in percentage_issues:
+        missing_for_percent = 'nonworkzone_baseline_capacity'
+    elif 'invalid_baseline_pcphpl' in percentage_issues:
+        missing_for_percent = 'valid_nonworkzone_baseline_capacity'
+    elif 'missing_baseline_source' in percentage_issues:
+        missing_for_percent = 'baseline_source'
+
+    if estimate_available:
+        envelope = _maryland_capacity_envelope(lane_comp['general_total'], lane_comp['general_open'])
+        if baseline_valid and baseline_pcphpl is not None and not percentage_issues:
+            missing_for_percent = None
+            denom = lane_comp['general_total'] * float(baseline_pcphpl)
+            c_min, c_max = envelope['capacity_pcph_range']
+            rem_min = 100.0 * c_min / denom
+            rem_max = 100.0 * c_max / denom
+            loss_min = 100.0 - rem_max
+            loss_max = 100.0 - rem_min
+            remaining_percent_range = [rem_min, rem_max]
+            loss_percent_range = [loss_min, loss_max]
+            if rem_min < 0 or rem_max > 100 or loss_min < 0 or loss_max > 100:
+                baseline_warning = (
+                    'Computed percentage falls outside 0-100%; verify caller-provided baseline and scenario assumptions.'
+                )
+
+    return {
+        'found': True,
+        **_source_metadata(F, feat),
+        'feed': F.get('name', feed),
+        'record_id': _record_id(feat),
+        'reference_time': _ref_time_utc().isoformat(),
+        'feed_update_date': F.get('info', {}).get('update_date'),
+        'start_date': _get_field(feat, 'start_date')[1],
+        'end_date': _get_field(feat, 'end_date')[1],
+        'event_status': _get_field(feat, 'event_status')[1],
+        'road_label': _road_label(feat),
+        'description': re.sub(r'\s+', ' ', desc).strip(),
+        'estimate_available': estimate_available,
+        'refusal_reasons': refusal_reasons,
+        'general_total': lane_comp['general_total'],
+        'general_closed': lane_comp['general_closed'],
+        'general_open': lane_comp['general_open'],
+        'exit_lane_total': lane_comp['exit_lane_total'],
+        'exit_lane_closed': lane_comp['exit_lane_closed'],
+        'shoulder_total': lane_comp['shoulder_total'],
+        'shoulder_closed': lane_comp['shoulder_closed'],
+        'work_zone_type_reported': wz_type,
+        'hcm_duration_category': None,
+        'speed_status': speed_info['speed_status'],
+        'speed_raw_kph': speed_info['raw_kph'],
+        'speed_mph_display': speed_info['speed_mph_display'],
+        'speed_used_in_capacity_equation': False,
+        'LCSI': envelope['LCSI'] if envelope else None,
+        'capacity_pcph_range': envelope['capacity_pcph_range'] if envelope else None,
+        'per_open_lane_pcph_range': envelope['per_open_lane_pcph_range'] if envelope else None,
+        'capacity_pcph_display_range': envelope['capacity_pcph_display_range'] if envelope else None,
+        'capacity_drop_percent': loss_percent_range,
+        'remaining_percent_range': remaining_percent_range,
+        'loss_percent_range': loss_percent_range,
+        'missing_for_percent': missing_for_percent,
+        'baseline_pcphpl': float(baseline_pcphpl) if baseline_valid and baseline_pcphpl is not None else None,
+        'baseline_source': baseline_source_text,
+        'baseline_warning': baseline_warning,
+        'percentage_issues': percentage_issues,
+    }
+
+
+def _evaluate_capacity_plain(feed: str, record_id: str) -> Dict[str, Any]:
+    """Baseline evaluation without domain rules: raw listed-lane fraction only."""
+    F, feat = _find_record(feed, record_id)
+    if feat is None:
+        return {'found': False, 'feed': F.get('name', feed), 'record_id': record_id}
+    _, lanes = _get_field(feat, 'lanes')
+    lane_list = [ln for ln in lanes if isinstance(ln, dict)] if isinstance(lanes, list) else []
+    total = len(lane_list)
+    closed = sum(1 for ln in lane_list if str(ln.get('status')) == 'closed')
+    opened = sum(1 for ln in lane_list if str(ln.get('status')) == 'open')
+    open_fraction = (opened / total) if total > 0 else None
+    return {
+        'found': True,
+        **_source_metadata(F, feat),
+        'feed': F.get('name', feed),
+        'record_id': _record_id(feat),
+        'plain_listed_lane_count': total,
+        'plain_listed_closed_count': closed,
+        'plain_listed_open_count': opened,
+        'plain_listed_open_fraction': open_fraction,
+        'plain_fraction_is_not_capacity': True,
+    }
+
+
+@T._errors_as_text
+def assess_record_trust(feed: str, record_id: str) -> str:
+    """Assess whether a specific WZDx work-zone record can be trusted for immediate TMC operational action
+    (DMS warnings, 511 detour alerts, or CCTV verification). Use this tool instead of get_work_zones or
+    check_location when an operator asks if a reported closure is reliable, stale, unverified, or internally
+    contradictory. Inputs: feed ('FL', 'AZ', or a feed name from list_feeds) and record_id (exact WZDx
+    feature id). Evaluates time conflicts first (start_date after end_date), then event_status and
+    post-end-date updates against unified WZDX_NOW, verification flags, and vehicular lane consistency
+    (excluding shoulders from travel-lane contradictions and treating alternating-one-way as a lane
+    restriction). Returns an operational tier (High, Medium, Low, Scheduled, or Completed) with field
+    evidence. High trust means the record passes the defined checks; it does not prove field cones are
+    currently deployed without CCTV confirmation. Read-only."""
+    res = _evaluate_record_trust(feed, record_id)
+    if not res['found']:
+        return f"Error: record '{record_id}' was not found in feed '{res['feed']}'."
+
+    tier = res['final_tier']
+    lc = res['lane_component']
+    def verification_text(name, evidence):
+        if not evidence['present']:
+            return f'{name}=not reported (field absent)'
+        if evidence['value'] is None:
+            return f'{name}=not reported (empty value)'
+        return f"{name}={evidence['value']}"
+    verif_text = ', '.join(verification_text(name, evidence)
+                           for name, evidence in res['verification_evidence'].items())
+
+    action_map = {
+        'High': 'Passes the defined record checks; confirm field status before major DMS or detour actions.',
+        'Medium': 'Usable for situational awareness, but verify via CCTV or field contact before posting major DMS or detour alerts.',
+        'Low': 'Do not act on this record alone; inspect raw feed anomalies or confirm on CCTV first.',
+        'Scheduled': 'Not yet active at reference time; no immediate DMS or detour action required.',
+        'Completed': 'Marked completed in feed; no active DMS or detour action required.',
+    }
+
+    lines = [
+        f"Work Zone Trust Assessment — Record {res['record_id']} ({res['road_label']}, {res['feed']})",
+        f"Trust Tier: {tier}",
+        f"Reference Time (UTC): {res['reference_time']}",
+        f"Feed Update (as reported): {res['feed_update_date'] or 'not reported'}",
+        f"Reporting Source: {res['data_source_id'] or 'not reported'} "
+        f"({res['data_source_organization'] or 'organization not reported'})",
+        'Checks:',
+        f"- Lifecycle: {res['lifecycle_state']} (event_status={res['event_status'] or 'not reported'}; "
+        f"start={res['start_date'] or 'not reported'}; end={res['end_date'] or 'not reported'}; "
+        f"update={res['update_date'] or 'not reported'})",
+        f"- Time Component Cap: {res['time_component_cap'] or 'none'}",
+        f"- Verification: {'at least one field verified' if res['any_verified'] else 'unverified'} ({verif_text})",
+        f"- Lane Consistency: {lc['consistency']} ({lc['consistency_note']})",
+        f"- Lane Breakdown: {lc['lanes_presence']} (general: {lc['general_total']} total, {lc['general_closed']} closed, "
+        f"{lc['general_open']} open; exit-lane: {lc['exit_lane_total']} total, {lc['exit_lane_closed']} closed; "
+        f"shoulder: {lc['shoulder_total']} total, {lc['shoulder_closed']} closed)",
+        f"- Decision Reasons: {', '.join(res['reasons'])}",
+        f"- Flags: {', '.join(res['flags']) if res['flags'] else 'none'}",
+        f"Recommended Action: {action_map[tier]}",
+    ]
+    return '\n'.join(lines)
+
+
+@T._errors_as_text
+def estimate_closure_capacity(
+    feed: str,
+    record_id: str,
+    baseline_pcphpl: Optional[float] = None,
+    baseline_source: str = '',
+) -> str:
+    """Estimate a screening-level freeway mainline work-zone capacity sensitivity envelope (in pc/h) for a
+    specific WZDx record using the Maryland SHA Appendix A equation (fixed alpha = 13.4%). Use this tool
+    instead of get_work_zones when a TMC operator asks how much capacity remains or whether a lane closure
+    severely restricts freeway throughput. Inputs: feed ('FL', 'AZ', or a feed name from list_feeds),
+    record_id (exact WZDx feature id), optional baseline_pcphpl (caller-supplied non-work-zone baseline in
+    pc/h/lane, finite positive number), and optional baseline_source (text describing the baseline source).
+    Refuses mainline estimation when the event is an exit ramp or non-mainline facility, freeway mainline
+    scope is unconfirmed, lanes are missing, no general lanes exist, or the lane configuration is outside
+    Maryland Table 1. Reports speed-limit input quality separately and marks percentage drop unknown when
+    baseline_pcphpl or its source is omitted. Output is a parameter-domain sensitivity envelope, not a field confidence
+    interval. Read-only."""
+    res = _evaluate_closure_capacity(feed, record_id, baseline_pcphpl=baseline_pcphpl, baseline_source=baseline_source)
+    if not res['found']:
+        return f"Error: record '{record_id}' was not found in feed '{res['feed']}'."
+
+    if res['speed_status'] == 'reported':
+        speed_text = f"reported ({res['speed_raw_kph']} km/h, about {res['speed_mph_display']:.1f} mph; not used in QDR/capacity equation)"
+    elif res['speed_status'] == 'invalid_nonpositive':
+        speed_text = f"invalid non-positive value reported ({res['speed_raw_kph']} km/h; mph unknown, not treated as missing)"
+    elif res['speed_status'] == 'invalid_nonnumeric':
+        speed_text = f"invalid non-numeric value ({res['speed_raw_kph']!r}; mph unknown)"
+    else:
+        speed_text = 'not reported (mph unknown)'
+
+    wz_type_text = (
+        f"{res['work_zone_type_reported']} (static/moving context only; does not map to HCM short/long-term duration)"
+        if res['work_zone_type_reported']
+        else 'not reported'
+    )
+
+    lines = [
+        f"Work Zone Capacity Screening — Record {res['record_id']} ({res['road_label']}, {res['feed']})",
+        f"Reference Time (UTC): {res['reference_time']}",
+        f"Feed Update (as reported): {res['feed_update_date'] or 'not reported'}",
+        f"Reported Event: start={res['start_date'] or 'not reported'}; end={res['end_date'] or 'not reported'}; "
+        f"status={res['event_status'] or 'not reported'}",
+        f"Scope Evidence (description): {res['description'] or 'not reported'}",
+        f"Mainline Estimate Available: {'Yes' if res['estimate_available'] else 'No (refused)'}",
+    ]
+    if not res['estimate_available']:
+        lines.append(f"Refusal Reasons: {', '.join(res['refusal_reasons'])}")
+    else:
+        lo_disp, hi_disp = res['capacity_pcph_display_range']
+        lines.append(
+            f"Capacity Sensitivity Envelope (same direction, pc/h): about {lo_disp}–{hi_disp} pc/h "
+            f"(parameter-scenario envelope, not a field confidence interval)"
+        )
+        per_lo, per_hi = res['per_open_lane_pcph_range']
+        lines.append(f'Per Open General Lane: about {round(per_lo, -1):.0f}–{round(per_hi, -1):.0f} pc/h/lane')
+        lines.append(f"LCSI: {res['LCSI']:.4g}")
+        if res['loss_percent_range'] is not None and res['remaining_percent_range'] is not None:
+            r_lo, r_hi = res['remaining_percent_range']
+            l_lo, l_hi = res['loss_percent_range']
+            src = res['baseline_source'] or 'not specified'
+            lines.append(
+                f"Capacity Drop vs. Caller Baseline ({res['baseline_pcphpl']:g} pc/h/lane; source: {src} — "
+                f"caller-provided, not independently verified): remaining {r_lo:.1f}%–{r_hi:.1f}%, "
+                f"loss {l_lo:.1f}%–{l_hi:.1f}%"
+            )
+            if res['baseline_warning']:
+                lines.append(f"Baseline Warning: {res['baseline_warning']}")
+        else:
+            issue_text = {
+                'missing_nonworkzone_baseline_capacity': 'non-work-zone baseline capacity not provided',
+                'invalid_baseline_pcphpl': 'baseline must be a finite positive number',
+                'missing_baseline_source': 'baseline source not provided',
+            }
+            details = '; '.join(issue_text.get(issue, issue) for issue in res['percentage_issues'])
+            lines.append(f'Capacity Drop Percentage: unknown ({details})')
+
+    lines.extend([
+        'Lane Breakdown & Inputs:',
+        f"- Mainline general lanes (assumed complete as listed): {res['general_total']} total, "
+        f"{res['general_closed']} closed, {res['general_open']} open",
+        f"- Separate non-mainline lanes: exit-lane {res['exit_lane_total']} total ({res['exit_lane_closed']} closed); "
+        f"shoulder {res['shoulder_total']} total ({res['shoulder_closed']} closed)",
+        f"- Reduced Speed Limit Input: {speed_text}",
+        f"- Work Zone Type: {wz_type_text}",
+        'Method & Modeling Assumptions:',
+        '- Source: Maryland SHA Work Zone Lane Closure Analysis Guidelines (rev. 2024-11-06), Appendix A, pp. 12-13.',
+        '- Envelope scans fBr in {0, 1}, fAT in {0, 1}, fDN in {0, 1}, fLAT in [0, 12] ft, with fixed modeling assumption alpha = 13.4%.',
+        '- Units are passenger cars per hour (pc/h); not converted to veh/h (heavy-vehicle %, grade, and PHF are not in WZDx).',
+    ])
+    return '\n'.join(lines)
+
+
+def estimate_closure_capacity_plain(feed: str, record_id: str) -> str:
+    """Baseline without domain rules: reports raw listed-lane counts and open fraction only (not capacity)."""
+    res = _evaluate_capacity_plain(feed, record_id)
+    if not res['found']:
+        return f"Record '{record_id}' not found in feed '{res['feed']}'."
+    if res['plain_listed_lane_count'] == 0:
+        return f"Record {res['record_id']}: 0 listed lanes; listed-lane open fraction unavailable."
+    frac = res['plain_listed_open_fraction']
+    return (
+        f"Record {res['record_id']}: {res['plain_listed_lane_count']} listed lane(s), "
+        f"{res['plain_listed_closed_count']} closed, {res['plain_listed_open_count']} open; "
+        f"listed-lane open fraction = {frac:.2f} (listed-lane fraction only, not a capacity estimate)."
+    )
+
+
+TOOLS = [assess_record_trust, estimate_closure_capacity]
+READ_ONLY = {'assess_record_trust', 'estimate_closure_capacity'}
+
+PLAIN_DESCRIPTIONS = {
+    'assess_record_trust': (
+        'Inspect a work zone record by feed and record_id and return its status, dates, verification flags, '
+        'and lanes. Read-only.'
+    ),
+    'estimate_closure_capacity': (
+        'Look up a work zone record by feed and record_id, with optional baseline_pcphpl and baseline_source, '
+        'and return lane and speed fields. Read-only.'
+    ),
+}
+
+
+@T._errors_as_text
+def assess_record_trust_raw(feed: str, record_id: str) -> str:
+    """Raw JSON version of assess_record_trust for ablation plain mode."""
+    F, feat = _find_record(feed, record_id)
+    if feat is None:
+        return json.dumps({'feed': F.get('name', feed), 'record_id': record_id, 'found': False})
+    return json.dumps({'feed': F.get('name', feed), 'reference_time': _ref_time_utc().isoformat(),
+                       'feed_update_date': F.get('info', {}).get('update_date'),
+                       'id': feat.get('id'), 'properties': feat.get('properties')}, default=str)
+
+
+@T._errors_as_text
+def estimate_closure_capacity_raw(
+    feed: str,
+    record_id: str,
+    baseline_pcphpl: Optional[float] = None,
+    baseline_source: str = '',
+) -> str:
+    """Raw JSON version of estimate_closure_capacity for ablation plain mode."""
+    F, feat = _find_record(feed, record_id)
+    if feat is None:
+        return json.dumps({'feed': F.get('name', feed), 'record_id': record_id, 'found': False})
+    return json.dumps(
+        {
+            'feed': F.get('name', feed),
+            'reference_time': _ref_time_utc().isoformat(),
+            'feed_update_date': F.get('info', {}).get('update_date'),
+            'id': feat.get('id'),
+            'properties': feat.get('properties'),
+            'baseline_pcphpl': baseline_pcphpl,
+            'baseline_source': baseline_source,
+        },
+        default=str,
+    )
+
+
+RAW_RESULTS = {
+    'assess_record_trust': assess_record_trust_raw,
+    'estimate_closure_capacity': estimate_closure_capacity_raw,
+}
+
+if __name__ == '__main__':
+    if len(sys.argv) >= 3:
+        print(assess_record_trust(sys.argv[1], sys.argv[2]))
+        print()
+        print(estimate_closure_capacity(sys.argv[1], sys.argv[2]))
+

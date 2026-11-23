@@ -1,0 +1,25 @@
+{
+ "about": "Questions derived from the previously agreed TMC scenarios and records checked before running the model. Reference answers are an AI-assisted, source-checked draft, not a claim that the student independently authored or graded them. Counts refer to the saved snapshot and reported lane entries.",
+ "env": {
+  "WZDX_SNAPSHOT": "snapshots/2026-11-05",
+  "WZDX_NOW": "1793888460"
+ },
+ "max_steps": 8,
+ "questions": [
+  {
+   "id": "shoulder_record_trust",
+   "question": "At the saved reference time, AZ511 record 351676 says all-lanes-open but lists a closed shoulder. Is that a contradiction, and how much confidence should I place in this record before posting a major alert?",
+   "answer": "The reported fields are consistent: the list contains one general lane open and one shoulder closed. A shoulder closure does not contradict the vehicle impact all-lanes-open. assess_record_trust returns Medium because all four verification flags are False. Confirm field status before a major DMS or detour action. Do not claim that the entire I-10 mainline is confirmed open: the description concerns a ramp from I-10 Eastbound to SR-387. Checked in snapshots/2026-11-05/az511.json.gz, record 351676, properties.vehicle_impact, lanes, is_*_verified and core_details.description."
+  },
+  {
+   "id": "mainline_trust_and_capacity",
+   "question": "For AZ511 record lmsaCxKAd/C/B4u3LIJ7zNUM0E8= on I-17 southbound, first assess the record's reliability and then estimate its freeway mainline capacity. What can you report without a non-work-zone baseline, and can I call it a 50% capacity loss?",
+   "answer": "Use both assess_record_trust and estimate_closure_capacity. The record is Medium and unverified, with some-lanes-closed and two listed general lanes, one closed and one open. The reported scope is I-17 southbound, Munds Park MP328 to Kachina Blvd MP327, left lane closed. LCSI is 2. The fixed-alpha parameter-scenario sensitivity envelope is approximately 1560 to 2190 pc/h; one open lane makes the per-open-lane and directional total values numerically equal. Without a caller-supplied non-work-zone baseline and its source, capacity loss percentage is unknown. A 50% listed-lane closure fraction is not evidence of a 50% capacity loss. The 88.514 km/h speed limit displays as 55.0 mph but is not used in this capacity equation. The envelope assumes the list represents the event's normal general lanes and is not a field confidence interval. Checked in the AZ snapshot record, reviewed capacity arithmetic, and Maryland SHA 2024 Appendix A."
+  },
+  {
+   "id": "exit_ramp_scope_limit",
+   "question": "AZ511 record 388321 names I-10 Eastbound and lists one general lane, closed. Does that mean the I-10 mainline has zero capacity? Check the scope of this record and explain what the feed cannot establish.",
+   "answer": "No. The description explicitly says Exit ramp closed from I-10 Eastbound to S Palo Verde Blvd. The original listed lane type is general, with one closed entry and zero open entries; do not relabel the raw type as exit-lane. Those entries describe this reported ramp event and do not establish I-10 mainline closure or zero mainline capacity. estimate_closure_capacity refuses a mainline estimate, with non_mainline_exit_ramp among the reasons, and does not provide a mainline capacity or loss percentage. Check the event scope or obtain additional agency/field evidence. Checked in snapshots/2026-11-05/az511.json.gz, record 388321, core_details.description, road_names, vehicle_impact and lanes."
+  }
+ ]
+}
